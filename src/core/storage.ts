@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { Playbook } from './schema.js';
 import { parsePlaybook, serializePlaybook } from './parser.js';
+import { resolveLanguage } from './languages.js';
 
 export class PlaybookStorage {
   private baseDir: string;
@@ -26,8 +27,8 @@ export class PlaybookStorage {
   }
 
   private getFilePath(language: string): string {
-    const sanitized = language.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
-    return path.join(this.baseDir, `${sanitized}.md`);
+    const resolved = resolveLanguage(language);
+    return path.join(this.baseDir, `${resolved}.md`);
   }
 
   async listLanguages(): Promise<string[]> {

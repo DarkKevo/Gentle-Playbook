@@ -5,6 +5,7 @@ import { computePlaybookDiff, mergePlaybooks } from './core/diff.js';
 import { formatPlaybookForDisplay } from './core/parser.js';
 import { InvariantRule, AskRule, RuleType, Playbook } from './core/schema.js';
 import { buildSynthesisPrompt, parseSynthesizedRule, SynthesizedRule } from './core/synthesizer.js';
+import { getLanguageMenuLabels, resolveLanguage } from './core/languages.js';
 
 export interface ExtensionAPI {
   registerCommand(
@@ -30,32 +31,19 @@ async function handleAddRule(
 
   // 1. Pregunta 1: ¿Para qué lenguaje es la regla?
   if (!targetLang) {
-    const existingLangs = await storage.listLanguages();
-    const commonLangs = ['go', 'typescript', 'python', 'rust'];
-    const allOptions = Array.from(new Set([...existingLangs, ...commonLangs]));
-    allOptions.push('Otro lenguaje...');
-
     if (ctx.ui?.select) {
-      const selected = await ctx.ui.select('¿Para qué lenguaje es esta regla?', allOptions);
+      const selected = await ctx.ui.select(
+        '¿Para qué lenguaje es esta regla?',
+        getLanguageMenuLabels()
+      );
       if (!selected) return;
-
-      if (selected === 'Otro lenguaje...') {
-        if (!ctx.ui?.input) return;
-        const custom = await ctx.ui.input('Escribe el nombre del lenguaje:', 'ej: csharp, java, kotlin, php...');
-        if (!custom || !custom.trim()) {
-          ctx.ui?.notify('Operación cancelada: No se especificó el lenguaje.', 'info');
-          return;
-        }
-        targetLang = custom.trim().toLowerCase();
-      } else {
-        targetLang = selected;
-      }
+      targetLang = resolveLanguage(selected);
     } else {
       targetLang = 'go';
     }
+  } else {
+    targetLang = resolveLanguage(targetLang);
   }
-
-  targetLang = targetLang.toLowerCase();
 
   // 2. Pregunta 2: La regla como tal
   if (!ctx.ui?.input) {

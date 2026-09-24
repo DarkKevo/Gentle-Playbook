@@ -5,6 +5,7 @@ import { PlaybookStorage } from './core/storage.js';
 import { extractPlaybook, detectProjectLanguage } from './extract/extractor.js';
 import { computePlaybookDiff, mergePlaybooks } from './core/diff.js';
 import { serializePlaybook } from './core/parser.js';
+import { resolveLanguage } from './core/languages.js';
 
 async function main() {
   const args = process.argv.slice(2);
@@ -32,11 +33,12 @@ async function main() {
       }
 
       case 'show': {
-        const lang = args[1];
-        if (!lang) {
+        const langInput = args[1];
+        if (!langInput) {
           console.error('Error: Language argument required. Usage: gentle-playbook show <language>');
           process.exit(1);
         }
+        const lang = resolveLanguage(langInput);
         const pb = await storage.getPlaybook(lang);
         if (!pb) {
           console.error(`Error: No playbook found for language "${lang}".`);
