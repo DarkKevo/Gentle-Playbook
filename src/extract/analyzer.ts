@@ -93,13 +93,28 @@ export class CodePatternAnalyzer {
     let validatorNode = results.find((r) => r.node.name.toLowerCase().includes('notblank'))?.node;
 
     if (!validatorNode) {
-      // Try searching for custom validator registration
-      const customResults = await this.cg.query(projectPath, 'RegisterCustomValidators');
-      validatorNode = customResults[0]?.node;
+      // Try searching for validator package or files
+      const validatorResults = await this.cg.query(projectPath, 'validator');
+      validatorNode = validatorResults.find(
+        (r) =>
+          r.node.filePath.toLowerCase().includes('custom_validators') ||
+          r.node.filePath.toLowerCase().includes('validator')
+      )?.node;
     }
 
     if (validatorNode) {
       const relDir = path.dirname(validatorNode.filePath) + '/';
+      
+      // Check if custom_validators.go exists in that directory
+      let customValPath = path.join(path.dirname(validatorNode.filePath), 'custom_validators.go');
+      let targetFile = validatorNode.filePath;
+      try {
+        await fs.access(path.join(projectPath, customValPath));
+        targetFile = customValPath;
+      } catch {
+        // keep validatorNode.filePath
+      }
+
       invariants.push({
         id: 'dto-notblank-validation',
         type: 'invariant',
@@ -111,9 +126,9 @@ export class CodePatternAnalyzer {
 
       const code = await this.readSnippet(
         projectPath,
-        validatorNode.filePath,
-        validatorNode.startLine,
-        validatorNode.endLine || validatorNode.startLine + 25
+        targetFile,
+        1,
+        35
       );
 
       if (code) {
@@ -171,7 +186,7 @@ export class CodePatternAnalyzer {
 
     if (rbacNode) {
       const callers = await this.cg.callers(projectPath, rbacNode.name);
-      const callFiles = callers.map((c) => c.caller?.filePath || '').filter(Boolean);
+      const callFiles = callers.map((c) => c.filePath || '').filter(Boolean);
       const hasSpecificCallers = callFiles.length > 0;
 
       const relDir = path.dirname(rbacNode.filePath) + '/';

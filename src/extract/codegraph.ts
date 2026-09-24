@@ -24,12 +24,16 @@ export interface CodeGraphQueryResult {
   score?: number;
 }
 
-export interface CodeGraphCaller {
-  caller: CodeGraphNode;
-  callSite?: {
-    filePath: string;
-    line: number;
-  };
+export interface CodeGraphCallerItem {
+  name: string;
+  kind: string;
+  filePath: string;
+  startLine: number;
+}
+
+export interface CodeGraphCallersResponse {
+  symbol: string;
+  callers: CodeGraphCallerItem[];
 }
 
 export class CodeGraphWrapper {
@@ -94,7 +98,7 @@ export class CodeGraphWrapper {
     projectPath: string,
     symbol: string,
     options: { limit?: number } = {}
-  ): Promise<CodeGraphQueryResult[]> {
+  ): Promise<CodeGraphCallerItem[]> {
     await this.ensureIndex(projectPath);
     const args = ['callers', '-p', projectPath, '-j'];
     if (options.limit) {
@@ -105,7 +109,10 @@ export class CodeGraphWrapper {
     try {
       const { stdout } = await execFileAsync(this.binaryPath, args, { maxBuffer: 10 * 1024 * 1024 });
       if (!stdout || stdout.trim() === '') return [];
-      return JSON.parse(stdout.trim()) as CodeGraphQueryResult[];
+      const parsed = JSON.parse(stdout.trim());
+      if (Array.isArray(parsed)) return parsed;
+      if (parsed && Array.isArray(parsed.callers)) return parsed.callers;
+      return [];
     } catch {
       return [];
     }
