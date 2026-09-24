@@ -1,6 +1,6 @@
 ---
 name: gentle-playbook
-description: Consult and apply opinionated language architecture playbooks (~/.config/gentle-playbook/languages/). Triggers: playbook, normas del lenguaje, extraer playbook, gentle-playbook, arquitectura go, hexagono go, invariants de codigo, essence de programacion.
+description: "Consult and apply opinionated language architecture playbooks in ~/.config/gentle-playbook/languages/. Triggers: playbook, normas del lenguaje, extraer playbook, gentle-playbook, arquitectura go, hexagono go, invariants de codigo, essence de programacion."
 ---
 
 # Gentle Playbook: Essence & Architecture Enforcement
