@@ -36,13 +36,14 @@ export default function (pi: ExtensionAPI) {
         if (ctx.ui?.select) {
           const selected = await ctx.ui.select(
             'Select a language playbook to view:',
-            languages.map((l) => ({ label: l, value: l }))
+            languages
           );
-          if (selected) {
+          if (selected && typeof selected === 'string') {
             const pb = await storage.getPlaybook(selected);
             if (pb) {
-              ctx.ui?.notify(`Playbook loaded: ${selected} (v${pb.version})`, 'info');
-              console.log(serializePlaybook(pb));
+              const summary = `${selected.toUpperCase()} (v${pb.version}): ${pb.invariants.length} invariants, ${pb.askRules.length} ask rules, ${pb.snippets.length} snippets`;
+              ctx.ui?.notify(summary, 'info');
+              console.log('\n' + serializePlaybook(pb) + '\n');
             }
           }
         } else {
