@@ -33,6 +33,14 @@ Every developer has an architectural "essence" for each programming language (e.
 ### Inspecting Active Playbook
 When working in a project with an active language (e.g. `go.mod`), inspect `~/.config/gentle-playbook/languages/<language>.md`. Read the topology and invariants before planning or creating files.
 
+### Adding Rules Interactively
+Run:
+```
+/gentle-playbook-add [lang]
+```
+Or `/gentle-playbook add [lang]`.
+This prompts for a natural language description, lets the user select whether it is `[NORMATIVA]` (invariant) or `[ASK]` (conditional recipe), uses the model to synthesize the rule structure (surface, trigger, anti-trigger, prompt), shows a confirmation preview, and saves it to the playbook.
+
 ### Extracting a New Playbook from a Reference Repo
 Run the extraction command:
 ```bash
