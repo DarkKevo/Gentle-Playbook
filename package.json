@@ -13,7 +13,21 @@
     "test": "vitest run",
     "test:watch": "vitest"
   },
-  "keywords": ["gentle-ai", "playbook", "pi-extension", "architecture"],
+  "keywords": [
+    "pi-package",
+    "gentle-ai",
+    "playbook",
+    "pi-extension",
+    "architecture"
+  ],
+  "pi": {
+    "extensions": [
+      "./dist/index.js"
+    ],
+    "skills": [
+      "./skills"
+    ]
+  },
   "author": "darkkevo",
   "license": "MIT",
   "devDependencies": {
