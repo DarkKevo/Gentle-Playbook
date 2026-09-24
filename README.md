@@ -1,0 +1,242 @@
+# 📘 Gentle-Playbook
+
+> **Architectural Essence & Opinionated Language Playbook Manager for Pi & el Gentleman**
+
+`gentle-playbook` es una extensión nativa y CLI para **Pi** diseñada para capturar, almacenar, hacer cumplir y evolucionar las normas de arquitectura de software personalizadas por lenguaje de programación.
+
+---
+
+## 🎯 El Problema que Resuelve
+
+Cuando desarrollás software con agentes de IA, cada nuevo repositorio o proyecto suele sufrir de tres problemas recurrentes:
+
+1. **Amnesia Arquitectónica & Quema de Tokens:** El agente no sabe cómo estructurás tus proyectos en cada lenguaje (por ejemplo, Arquitectura Hexagonal en Go, middleware de bytes nulos para PostgreSQL, validaciones custom en DTOs o envelopes universales de respuesta). Tenés que explicarle todo desde cero en cada sesión, quemando miles de tokens de contexto.
+2. **Fatiga de Contexto & Consulta entre Repositorios:** Tenés que abrir repositorios antiguos para copiar cómo habías implementado cierta validación o estructura para que el agente la replique.
+3. **Improvisación de Librerías y "AI-Slop":** Ante la falta de directivas claras, los modelos suelen improvisar librerías externas innecesarias o sugerir preguntas irrelevantes en cada archivo (ej: meter Redis o Rate Limiting en scripts que no lo necesitan).
+
+---
+
+## 🏛️ Modelo Mental & Taxonomía de Reglas
+
+`gentle-playbook` divide las preferencias arquitectónicas en dos categorías estrictas:
+
+```
+                    ┌─────────────────────────┐
+                    │     GENTLE PLAYBOOK     │
+                    └────────────┬────────────┘
+                                 │
+         ┌───────────────────────┴───────────────────────┐
+         ▼                                               ▼
+┌─────────────────────────┐             ┌─────────────────────────┐
+│       INVARIANTS        │             │       ASK CATALOG       │
+│   (Normativas Duras)    │             │ (Patrones Condicionales)│
+├─────────────────────────┤             ├─────────────────────────┤
+│ • No negociables        │             │ • Opcionales/Recetas    │
+│ • Aplicadas en silencio │             │ • Requieren Trigger     │
+│ • Cero preguntas        │             │ • Poseen Anti-Trigger   │
+│ • Ej: Bytes nulos, DTOs │             │ • Ej: Cache, Rate-Limit │
+└─────────────────────────┘             └─────────────────────────┘
+```
+
+### 1. Invariants (Normativa Global - No negociable)
+* Se aplican **incondicionalmente y en silencio**.
+* El agente jamás te pregunta si querés usarlas; las implementa por defecto al crear código en ese lenguaje.
+* *Ejemplo en Go:* Todo endpoint HTTP entrante pasa por el middleware de sanitización de bytes nulos (`\x00` y `%00`) para proteger PostgreSQL (SQLSTATE 22021). Todo DTO string obligatorio lleva el tag `validate:"notblank"`.
+
+### 2. Ask Catalog (Patrones Condicionales & Recetas)
+* Son bloques de arquitectura opcionales pero estandarizados.
+* **Coordenadas Deterministas de Activación:**
+  * **Surface:** Capa o directorio donde aplica (ej: `internal/adapters/handlers/`).
+  * **Trigger:** Condición técnica exacta que activa la consulta (ej: creación de endpoints públicos sin auth como `/login` o `/register`).
+  * **Anti-Trigger:** Condición de veto donde está **terminantemente prohibido preguntar** (ej: rutas privadas con JWT, tareas batch o gRPC interno).
+  * **Pregunta Canónica:** La formulación exacta para el usuario.
+  * **Receta:** Si el usuario acepta, el agente utiliza el snippet canónico registrado sin inventar librerías de terceros.
+
+---
+
+## 🚀 Instalación
+
+### Método 1: Script Automatizado (Recomendado)
+Cloná el repositorio y ejecutá el instalador:
+
+```bash
+git clone https://github.com/DarkKevo/Gentle-Playbook.git ~/Proyectos/Gentle-playbook
+cd ~/Proyectos/Gentle-playbook
+./install.sh
+```
+
+El script se encarga de:
+- Instalar dependencias npm y compilar TypeScript.
+- Enlazar el binario CLI en `~/.local/bin/gentle-playbook`.
+- Registrar el paquete nativo en Pi (`pi install .`).
+- Crear el directorio de almacenamiento `~/.config/gentle-playbook/languages/`.
+
+### Método 2: Instalación Directa desde Pi
+
+Podés instalarlo directamente con el gestor de paquetes de Pi:
+
+```bash
+pi install git:github.com/DarkKevo/Gentle-Playbook
+```
+
+O si ya lo tenés clonado localmente:
+
+```bash
+pi install /ruta/a/Gentle-playbook
+```
+
+---
+
+## 🛠️ Modos de Uso
+
+### 1. Detección Automática en Pi (Zero-Friction)
+Cuando abrís una sesión de Pi en cualquier proyecto, el hook `session_start` inspecciona los archivos raíz:
+- Si encuentra `go.mod`, carga silenciosamente `go.md`.
+- Si encuentra `package.json`, carga `typescript.md`.
+- Si encuentra `Cargo.toml`, carga `rust.md`.
+
+El agente recibe las normas y directivas de inmediato sin que tengas que ejecutar ningún comando.
+
+---
+
+### 2. Comando Interactivo en Pi: `/gentle-playbook-add`
+Agregá nuevas preferencias o normas en tiempo real mediante un flujo guiado en 2 preguntas:
+
+1. **Pregunta 1:** Seleccionás el lenguaje desde el catálogo curado:
+   `Go`, `TypeScript`, `JavaScript`, `Python`, `Rust`, `C#`, `Java`, `Kotlin`, `PHP`, `Ruby`, `C++`, etc.
+2. **Pregunta 2:** Escribís en lenguaje natural tu preferencia en una ventana de texto:
+   > *"me gusta colocar rate limit en situaciones donde son rutas peligrosas como logins de usuarios"*
+3. **Clasificación:** Elegís si es `[NORMATIVA]` o `[ASK]`.
+4. **Síntesis con LLM & Preview de Confirmación:**
+   El modelo estructurará la regla y te mostrará una confirmación con `Yes / No` en la terminal antes de guardarla en el playbook:
+
+```text
+¿Deseas guardar esta regla en el Playbook de GO?
+
+Título: [ASK] Rate Limiting en Autenticación
+Surface: src/shared/middlewares/
+Trigger: Rutas públicas sensibles como /login o /register
+Anti-Trigger: Rutas autenticadas internas o endpoints privados
+Pregunta: "¿Deseas aplicar el middleware de Rate Limit estándar a este endpoint?"
+Default: Omitir regla
+```
+
+---
+
+### 3. Extracción de Esencia desde un Repositorio: `extract`
+Si ya tenés un proyecto de referencia donde programaste con tu estilo (por ejemplo un backend en Go):
+
+```bash
+gentle-playbook extract /ruta/a/mi-backend-go
+```
+
+**¿Cómo funciona por debajo?**
+1. **CodeGraph:** Inicializa o consulta el índice `.codegraph` del repositorio para mapear ASTs, símbolos y call-graphs sin quemar tokens leyendo archivos completos.
+2. **Análisis de Topología:** Identifica si el proyecto es Hexagonal Modular, Clean Architecture, etc., y extrae la estructura de carpetas canónicas.
+3. **Detección de Invariantes y Snippets:** Radiografía middlewares globales, validadores custom y envelopes de respuesta universal, capturando el código fuente real como snippet canónico.
+4. **Deducción de Triggers con Call-Graph:** Analiza las referencias de llamadas (`callers`) para inferir en qué rutas se usan ciertos módulos y generar los Triggers y Anti-Triggers automáticamente.
+5. **Diff Semántico & Deduplicación:** Compara lo detectado con tu playbook actual. Las reglas idénticas se descartan, los conflictos se señalan y las nuevas reglas se incorporan limpiamente.
+
+---
+
+### 4. Comandos de Terminal (CLI)
+
+```bash
+# Listar todos los playbooks y cantidad de reglas registradas
+gentle-playbook list
+
+# Ver el resumen de normas y preguntas condicionales de un lenguaje
+gentle-playbook show go
+
+# Ver el playbook completo incluyendo los snippets de código fuente
+gentle-playbook show go --full
+
+# Extraer y actualizar un playbook desde un repositorio
+gentle-playbook extract /ruta/al/repo [--lang go]
+
+# Eliminar un playbook
+gentle-playbook delete python
+```
+
+---
+
+### 5. Slash Commands en Pi
+
+| Comando | Descripción |
+|---|---|
+| `/gentle-playbook` | Abre el selector interactivo para auditar el playbook activo. |
+| `/gentle-playbook show <lang>` | Muestra las normativas e invariantes del lenguaje en el chat. |
+| `/gentle-playbook-add` | Flujo interactivo guiado para agregar una nueva regla con síntesis LLM. |
+| `/gentle-playbook extract <path>` | Lanza la extracción desde Pi. |
+
+---
+
+## 📂 Formato de Almacenamiento
+
+Los playbooks se almacenan como archivos Markdown limpios en `~/.config/gentle-playbook/languages/<lang>.md`. Podés editarlos tanto desde la herramienta como a mano con tu editor favorito.
+
+Ejemplo de `~/.config/gentle-playbook/languages/go.md`:
+
+```markdown
+<!-- gentle-playbook:v2 lang=go updated=2026-09-24 -->
+# Playbook: Go
+
+## Topology: Modular Hexagonal (Ports & Adapters)
+- `src/adapters/drivers/`
+- `src/adapters/drivens/`
+- `src/core/ports/`
+- `src/core/entities/`
+- `src/shared/`
+
+## Invariants
+
+### [INVARIANT:null-byte-sanitizer] Middleware de Sanitización de Bytes Nulos
+- **Surface:** `src/shared/middlewares/`
+- **Rule:** Intercepta y rechaza peticiones HTTP con caracteres nulos (\x00 o %00) en URI, Query params o Body JSON para evitar excepciones de encoding en PostgreSQL (SQLSTATE 22021).
+
+### [INVARIANT:dto-notblank-validation] Validación NotBlank en DTOs
+- **Surface:** `src/shared/validators/`
+- **Rule:** Campos string obligatorios en DTOs deben validar que no contengan bytes nulos ni estén compuestos únicamente de espacios en blanco utilizando la regla custom `validate:"notblank"`.
+
+## Ask Catalog
+
+### [ASK:rbac-authorization] Middleware de Autorización RBAC (Roles)
+- **Surface:** `src/shared/middlewares/`
+- **Trigger:** Creación de endpoints protegidos que requieren privilegios de administración o roles específicos.
+- **Anti-Trigger:** Rutas públicas (/auth/login, /health) o endpoints accesibles a cualquier usuario autenticado sin distinción de rol.
+- **Prompt:** "Este endpoint requiere restricción de privilegios. ¿Le aplicamos el middleware de control de roles (RBAC) estándar?"
+- **Default:** Montar solo AuthMiddleware estándar sin restricción de roles específicos.
+- **Recipe:** `canonical-rbac-middleware`
+
+## Canonical Snippets
+
+### [SNIPPET:canonical-null-byte-sanitizer] Middleware Sanitizador de Bytes Nulos
+```go:null_byte_sanitizer.go
+// [Código fuente canónico real]
+```
+```
+
+---
+
+## 🧪 Testing
+
+El proyecto cuenta con una suite completa de pruebas unitarias y de integración desarrolladas con **Vitest**:
+
+```bash
+cd Gentle-playbook
+npm test
+```
+
+Incluye tests de:
+- Parsing y serialización bidireccional idempotente.
+- Almacenamiento y persistencia en sistema de archivos.
+- Motor de cálculo de Diff y resolución de conflictos.
+- Catálogo oficial de lenguajes y normalización de alias.
+- Síntesis de reglas mediante prompts estructurados.
+- Extracción en vivo contra repositorios reales usando CodeGraph.
+
+---
+
+## 📄 Licencia
+
+MIT © [DarkKevo](https://github.com/DarkKevo)
