@@ -56,33 +56,41 @@ Cuando desarrollás software con agentes de IA, cada nuevo repositorio o proyect
 
 ## 🚀 Instalación
 
-### Método 1: Script Automatizado (Recomendado)
-Cloná el repositorio y ejecutá el instalador:
+### Método 1: One-Liner con `curl` (Recomendado)
+
+Ejecutá este comando en cualquier terminal para instalar todo automáticamente sin necesidad de clonar manualmente:
 
 ```bash
-git clone https://github.com/DarkKevo/Gentle-Playbook.git ~/Proyectos/Gentle-playbook
-cd ~/Proyectos/Gentle-playbook
-./install.sh
+curl -fsSL https://raw.githubusercontent.com/DarkKevo/Gentle-Playbook/master/install.sh | bash
 ```
 
 El script se encarga de:
+- Descargar la última versión en `~/.local/share/gentle-playbook`.
 - Instalar dependencias npm y compilar TypeScript.
 - Enlazar el binario CLI en `~/.local/bin/gentle-playbook`.
-- Registrar el paquete nativo en Pi (`pi install .`).
+- Registrar el paquete nativo en Pi (`pi install`).
 - Crear el directorio de almacenamiento `~/.config/gentle-playbook/languages/`.
+
+---
 
 ### Método 2: Instalación Directa desde Pi
 
-Podés instalarlo directamente con el gestor de paquetes de Pi:
+Si ya tenés Pi abierto o preferís instalarlo vía su gestor de paquetes:
 
 ```bash
 pi install git:github.com/DarkKevo/Gentle-Playbook
 ```
 
-O si ya lo tenés clonado localmente:
+---
+
+### Método 3: Instalación Local (Desarrollo)
+
+Si preferís clonar el código para modificarlo:
 
 ```bash
-pi install /ruta/a/Gentle-playbook
+git clone https://github.com/DarkKevo/Gentle-Playbook.git ~/Proyectos/Gentle-playbook
+cd ~/Proyectos/Gentle-playbook
+./install.sh
 ```
 
 ---
