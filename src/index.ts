@@ -28,28 +28,36 @@ async function handleAddRule(
   const parts = args.trim().split(/\s+/).filter(Boolean);
   let targetLang = parts[0] === 'add' ? parts[1] : parts[0];
 
-  // 1. Language resolution
+  // 1. Pregunta 1: ¿Para qué lenguaje es la regla?
   if (!targetLang) {
-    const cwd = ctx.cwd || process.cwd();
-    const detected = await detectProjectLanguage(cwd);
-    if (detected && detected !== 'generic') {
-      targetLang = detected;
-    } else {
-      const languages = await storage.listLanguages();
-      const options = languages.length > 0 ? languages : ['go', 'typescript', 'python', 'rust'];
-      if (ctx.ui?.select) {
-        const selected = await ctx.ui.select('Selecciona el lenguaje para agregar la regla:', options);
-        if (!selected) return;
-        targetLang = selected;
+    const existingLangs = await storage.listLanguages();
+    const commonLangs = ['go', 'typescript', 'python', 'rust'];
+    const allOptions = Array.from(new Set([...existingLangs, ...commonLangs]));
+    allOptions.push('Otro lenguaje...');
+
+    if (ctx.ui?.select) {
+      const selected = await ctx.ui.select('¿Para qué lenguaje es esta regla?', allOptions);
+      if (!selected) return;
+
+      if (selected === 'Otro lenguaje...') {
+        if (!ctx.ui?.input) return;
+        const custom = await ctx.ui.input('Escribe el nombre del lenguaje:', 'ej: csharp, java, kotlin, php...');
+        if (!custom || !custom.trim()) {
+          ctx.ui?.notify('Operación cancelada: No se especificó el lenguaje.', 'info');
+          return;
+        }
+        targetLang = custom.trim().toLowerCase();
       } else {
-        targetLang = 'go';
+        targetLang = selected;
       }
+    } else {
+      targetLang = 'go';
     }
   }
 
   targetLang = targetLang.toLowerCase();
 
-  // 2. Input dialog for preference text
+  // 2. Pregunta 2: La regla como tal
   if (!ctx.ui?.input) {
     ctx.ui?.notify('Error: UI no disponible para capturar la regla.', 'error');
     return;
