@@ -231,6 +231,64 @@ export function serializePlaybook(playbook: Playbook): string {
   return parts.join('\n');
 }
 
+export function formatPlaybookForDisplay(playbook: Playbook): string {
+  const parts: string[] = [];
+
+  parts.push(`# 📘 Playbook: ${capitalize(playbook.language)} (v${playbook.version})`);
+  parts.push(`*Última actualización: ${playbook.updatedAt}*`);
+  parts.push('');
+
+  // Topology
+  parts.push(`## 🏛️ Topology: ${playbook.topology.pattern}`);
+  for (const dir of playbook.topology.directories) {
+    parts.push(`- \`${dir}\``);
+  }
+  parts.push('');
+
+  // Invariants
+  parts.push('## 🛡️ Invariants (Reglas Duras)');
+  parts.push('');
+  for (const inv of playbook.invariants) {
+    parts.push(`### [INVARIANT:${inv.id}] ${inv.title}`);
+    parts.push(`- **Surface:** \`${inv.surface}\``);
+    parts.push(`- **Rule:** ${inv.description}`);
+    parts.push('');
+  }
+
+  // Ask Catalog
+  parts.push('## 💡 Ask Catalog (Patrones Condicionales)');
+  parts.push('');
+  for (const ask of playbook.askRules) {
+    parts.push(`### [ASK:${ask.id}] ${ask.title}`);
+    parts.push(`- **Surface:** \`${ask.surface}\``);
+    parts.push(`- **Trigger:** ${ask.trigger}`);
+    parts.push(`- **Anti-Trigger:** ${ask.antiTrigger}`);
+    parts.push(`- **Prompt:** "${ask.prompt}"`);
+    parts.push(`- **Default:** ${ask.defaultAction}`);
+    if (ask.recipeSnippetId) {
+      parts.push(`- **Recipe:** \`${ask.recipeSnippetId}\``);
+    }
+    parts.push('');
+  }
+
+  // Canonical Snippets
+  if (playbook.snippets.length > 0) {
+    parts.push('## 📦 Canonical Snippets');
+    parts.push('');
+    for (const snip of playbook.snippets) {
+      const ext = snip.language === 'go' ? '.go' : snip.language === 'typescript' ? '.ts' : '';
+      const filename = snip.id.replace(/^canonical-/, '').replace(/-/g, '_') + ext;
+      parts.push(`### [SNIPPET:${snip.id}] ${snip.title}`);
+      parts.push(`\`\`\`${snip.language}:${filename}`);
+      parts.push(snip.code);
+      parts.push('```');
+      parts.push('');
+    }
+  }
+
+  return parts.join('\n');
+}
+
 function capitalize(s: string): string {
   if (!s) return '';
   return s.charAt(0).toUpperCase() + s.slice(1);

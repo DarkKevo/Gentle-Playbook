@@ -1,9 +1,8 @@
 import * as path from 'node:path';
-import { Box, Markdown } from '@earendil-works/pi-tui';
 import { PlaybookStorage } from './core/storage.js';
 import { extractPlaybook, detectProjectLanguage } from './extract/extractor.js';
 import { computePlaybookDiff, mergePlaybooks } from './core/diff.js';
-import { serializePlaybook } from './core/parser.js';
+import { formatPlaybookForDisplay } from './core/parser.js';
 
 export interface ExtensionAPI {
   registerCommand(
@@ -13,46 +12,13 @@ export interface ExtensionAPI {
       handler: (args: string, ctx: any) => Promise<void>;
     }
   ): void;
-  registerMessageRenderer?(
-    customType: string,
-    renderer: (message: any, options: { outputPad: number; expanded?: boolean }, theme: any) => any
-  ): void;
   sendMessage(message: any, options?: any): void;
   registerTool?(tool: any): void;
   on(event: string, handler: (event: any, ctx: any) => Promise<void>): void;
 }
 
-function createMarkdownTheme(theme: any): any {
-  return {
-    heading: (text: string) => (theme?.bold ? theme.bold(theme.fg ? theme.fg('accent', text) : text) : text),
-    link: (text: string) => (theme?.fg ? theme.fg('accent', text) : text),
-    linkUrl: (text: string) => (theme?.fg ? theme.fg('muted', text) : text),
-    code: (text: string) => (theme?.fg ? theme.fg('warning', text) : text),
-    codeBlock: (text: string) => text,
-    codeBlockBorder: (text: string) => (theme?.fg ? theme.fg('muted', text) : text),
-    quote: (text: string) => (theme?.fg ? theme.fg('muted', text) : text),
-    quoteBorder: (text: string) => (theme?.fg ? theme.fg('muted', text) : text),
-    hr: (text: string) => (theme?.fg ? theme.fg('muted', text) : text),
-    listBullet: (text: string) => (theme?.fg ? theme.fg('accent', text) : text),
-    bold: (text: string) => (theme?.bold ? theme.bold(text) : text),
-    italic: (text: string) => (theme?.italic ? theme.italic(text) : text),
-    underline: (text: string) => (theme?.underline ? theme.underline(text) : text),
-    strikethrough: (text: string) => text,
-  };
-}
-
 export default function (pi: ExtensionAPI) {
   const storage = new PlaybookStorage();
-
-  // Register custom message renderer to display the playbook directly in the TUI transcript
-  if (pi.registerMessageRenderer) {
-    pi.registerMessageRenderer('gentle-playbook-view', (message: any, { outputPad }: any, theme: any) => {
-      const box = new Box(outputPad, 1, (t: string) => (theme?.bg ? theme.bg('customMessageBg', t) : t));
-      const mdTheme = createMarkdownTheme(theme);
-      box.addChild(new Markdown(message.content, 1, 0, mdTheme));
-      return box;
-    });
-  }
 
   // 1. Register Slash Command: /gentle-playbook
   pi.registerCommand('gentle-playbook', {
@@ -79,10 +45,10 @@ export default function (pi: ExtensionAPI) {
               const summary = `${selected.toUpperCase()} (v${pb.version}): ${pb.invariants.length} invariants, ${pb.askRules.length} ask rules, ${pb.snippets.length} snippets`;
               ctx.ui?.notify(summary, 'info');
 
-              // Display the entire playbook in the transcript
+              // Send clean Markdown directly into the chat transcript
               pi.sendMessage({
-                customType: 'gentle-playbook-view',
-                content: serializePlaybook(pb),
+                customType: 'gentle-playbook',
+                content: formatPlaybookForDisplay(pb),
                 display: true,
               });
             }
@@ -104,8 +70,8 @@ export default function (pi: ExtensionAPI) {
         ctx.ui?.notify(`Displaying playbook: ${lang}`, 'info');
 
         pi.sendMessage({
-          customType: 'gentle-playbook-view',
-          content: serializePlaybook(pb),
+          customType: 'gentle-playbook',
+          content: formatPlaybookForDisplay(pb),
           display: true,
         });
       } else if (sub === 'extract') {
@@ -133,8 +99,8 @@ export default function (pi: ExtensionAPI) {
           );
 
           pi.sendMessage({
-            customType: 'gentle-playbook-view',
-            content: serializePlaybook(merged),
+            customType: 'gentle-playbook',
+            content: formatPlaybookForDisplay(merged),
             display: true,
           });
         } catch (err: any) {
