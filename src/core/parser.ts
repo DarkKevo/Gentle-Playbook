@@ -231,49 +231,42 @@ export function serializePlaybook(playbook: Playbook): string {
   return parts.join('\n');
 }
 
-export function formatPlaybookForDisplay(playbook: Playbook): string {
+export function formatPlaybookForDisplay(
+  playbook: Playbook,
+  options: { includeSnippets?: boolean } = {}
+): string {
   const parts: string[] = [];
 
   parts.push(`# 📘 Playbook: ${capitalize(playbook.language)} (v${playbook.version})`);
-  parts.push(`*Última actualización: ${playbook.updatedAt}*`);
+  parts.push(`*Topología: ${playbook.topology.pattern} | Última actualización: ${playbook.updatedAt}*`);
   parts.push('');
 
-  // Topology
-  parts.push(`## 🏛️ Topology: ${playbook.topology.pattern}`);
-  for (const dir of playbook.topology.directories) {
-    parts.push(`- \`${dir}\``);
-  }
-  parts.push('');
-
-  // Invariants
-  parts.push('## 🛡️ Invariants (Reglas Duras)');
+  // 1. Invariants (Normativas)
+  parts.push('## 🛡️ Normativas (Reglas Invariantes)');
   parts.push('');
   for (const inv of playbook.invariants) {
-    parts.push(`### [INVARIANT:${inv.id}] ${inv.title}`);
+    parts.push(`### [NORMATIVA] ${inv.title}`);
     parts.push(`- **Surface:** \`${inv.surface}\``);
-    parts.push(`- **Rule:** ${inv.description}`);
+    parts.push(`- **Regla:** ${inv.description}`);
     parts.push('');
   }
 
-  // Ask Catalog
-  parts.push('## 💡 Ask Catalog (Patrones Condicionales)');
+  // 2. Ask Catalog (Condicionales)
+  parts.push('## 💡 Preguntas Condicionales [ASK]');
   parts.push('');
   for (const ask of playbook.askRules) {
-    parts.push(`### [ASK:${ask.id}] ${ask.title}`);
+    parts.push(`### [ASK] ${ask.title}`);
     parts.push(`- **Surface:** \`${ask.surface}\``);
     parts.push(`- **Trigger:** ${ask.trigger}`);
     parts.push(`- **Anti-Trigger:** ${ask.antiTrigger}`);
-    parts.push(`- **Prompt:** "${ask.prompt}"`);
+    parts.push(`- **Pregunta:** "${ask.prompt}"`);
     parts.push(`- **Default:** ${ask.defaultAction}`);
-    if (ask.recipeSnippetId) {
-      parts.push(`- **Recipe:** \`${ask.recipeSnippetId}\``);
-    }
     parts.push('');
   }
 
-  // Canonical Snippets
-  if (playbook.snippets.length > 0) {
-    parts.push('## 📦 Canonical Snippets');
+  // 3. Canonical Snippets (solo si se solicita explícitamente)
+  if (options.includeSnippets && playbook.snippets.length > 0) {
+    parts.push('## 📦 Snippets Canónicos');
     parts.push('');
     for (const snip of playbook.snippets) {
       const ext = snip.language === 'go' ? '.go' : snip.language === 'typescript' ? '.ts' : '';

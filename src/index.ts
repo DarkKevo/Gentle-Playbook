@@ -26,6 +26,7 @@ export default function (pi: ExtensionAPI) {
     handler: async (args: string, ctx: any) => {
       const parts = args.trim().split(/\s+/).filter(Boolean);
       const sub = parts[0] || 'list';
+      const includeSnippets = args.includes('--snippets') || args.includes('--full');
 
       if (sub === 'list') {
         const languages = await storage.listLanguages();
@@ -42,13 +43,13 @@ export default function (pi: ExtensionAPI) {
           if (selected && typeof selected === 'string') {
             const pb = await storage.getPlaybook(selected);
             if (pb) {
-              const summary = `${selected.toUpperCase()} (v${pb.version}): ${pb.invariants.length} invariants, ${pb.askRules.length} ask rules, ${pb.snippets.length} snippets`;
+              const summary = `${selected.toUpperCase()} (v${pb.version}): ${pb.invariants.length} normativas, ${pb.askRules.length} ask rules`;
               ctx.ui?.notify(summary, 'info');
 
               // Send clean Markdown directly into the chat transcript
               pi.sendMessage({
                 customType: 'gentle-playbook',
-                content: formatPlaybookForDisplay(pb),
+                content: formatPlaybookForDisplay(pb, { includeSnippets }),
                 display: true,
               });
             }
@@ -59,7 +60,7 @@ export default function (pi: ExtensionAPI) {
       } else if (sub === 'show') {
         const lang = parts[1];
         if (!lang) {
-          ctx.ui?.notify('Usage: /gentle-playbook show <language>', 'warning');
+          ctx.ui?.notify('Usage: /gentle-playbook show <language> [--full]', 'warning');
           return;
         }
         const pb = await storage.getPlaybook(lang);
@@ -71,7 +72,7 @@ export default function (pi: ExtensionAPI) {
 
         pi.sendMessage({
           customType: 'gentle-playbook',
-          content: formatPlaybookForDisplay(pb),
+          content: formatPlaybookForDisplay(pb, { includeSnippets }),
           display: true,
         });
       } else if (sub === 'extract') {
