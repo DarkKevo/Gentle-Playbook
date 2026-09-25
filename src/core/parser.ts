@@ -282,6 +282,40 @@ export function formatPlaybookForDisplay(
   return parts.join('\n');
 }
 
+export function formatPlaybookForSystemPrompt(playbook: Playbook): string {
+  const parts: string[] = [];
+
+  parts.push(`ACTIVE ARCHITECTURAL PLAYBOOK: ${capitalize(playbook.language)} (v${playbook.version})`);
+  parts.push(`Topology Pattern: ${playbook.topology.pattern}`);
+  if (playbook.topology.directories.length > 0) {
+    parts.push('Target directory layout: ' + playbook.topology.directories.join(', '));
+  }
+  parts.push('');
+
+  parts.push('## INVARIANTS (MANDATORY & NON-NEGOTIABLE)');
+  parts.push('Apply these rules silently and unconditionally when writing, generating, or modifying code in this project. Do not ask for permission.');
+  for (const inv of playbook.invariants) {
+    parts.push(`- [${inv.id}] ${inv.title} (Surface: ${inv.surface}): ${inv.description}`);
+  }
+  parts.push('');
+
+  if (playbook.askRules.length > 0) {
+    parts.push('## CONDITIONAL RECIPES [ASK CATALOG]');
+    parts.push('Evaluate these rules ONLY when working on their declared Surface. Trigger activates the prompt; Anti-Trigger strictly forbids asking.');
+    for (const ask of playbook.askRules) {
+      parts.push(`- [${ask.id}] ${ask.title}`);
+      parts.push(`  Surface: ${ask.surface}`);
+      parts.push(`  Trigger: ${ask.trigger}`);
+      parts.push(`  Anti-Trigger: ${ask.antiTrigger}`);
+      parts.push(`  Prompt to User: "${ask.prompt}"`);
+      parts.push(`  Default: ${ask.defaultAction}`);
+    }
+    parts.push('');
+  }
+
+  return parts.join('\n');
+}
+
 function capitalize(s: string): string {
   if (!s) return '';
   return s.charAt(0).toUpperCase() + s.slice(1);

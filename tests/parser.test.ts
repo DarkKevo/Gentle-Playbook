@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parsePlaybook, serializePlaybook } from '../src/core/parser.js';
+import { parsePlaybook, serializePlaybook, formatPlaybookForSystemPrompt } from '../src/core/parser.js';
 import { Playbook } from '../src/core/schema.js';
 
 describe('Playbook Parser & Serializer', () => {
@@ -88,5 +88,17 @@ func RateLimiter() gin.HandlerFunc {
     // Re-parsing serialized output must be identical
     const reparsed = parsePlaybook(serialized);
     expect(reparsed).toEqual(playbook);
+  });
+
+  it('should format playbook for system prompt injection', () => {
+    const playbook = parsePlaybook(canonicalMarkdown);
+    const promptText = formatPlaybookForSystemPrompt(playbook);
+
+    expect(promptText).toContain('ACTIVE ARCHITECTURAL PLAYBOOK: Go');
+    expect(promptText).toContain('## INVARIANTS (MANDATORY & NON-NEGOTIABLE)');
+    expect(promptText).toContain('null-byte-sanitizer');
+    expect(promptText).toContain('## CONDITIONAL RECIPES [ASK CATALOG]');
+    expect(promptText).toContain('rate-limiting');
+    expect(promptText).toContain('Anti-Trigger: Rutas privadas con JWT');
   });
 });

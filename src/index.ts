@@ -2,7 +2,7 @@ import * as path from 'node:path';
 import { PlaybookStorage } from './core/storage.js';
 import { extractPlaybook, detectProjectLanguage } from './extract/extractor.js';
 import { computePlaybookDiff, mergePlaybooks } from './core/diff.js';
-import { formatPlaybookForDisplay } from './core/parser.js';
+import { formatPlaybookForDisplay, formatPlaybookForSystemPrompt } from './core/parser.js';
 import { InvariantRule, AskRule, RuleType, Playbook } from './core/schema.js';
 import { buildSynthesisPrompt, parseSynthesizedRule, SynthesizedRule } from './core/synthesizer.js';
 import { getLanguageMenuLabels, resolveLanguage } from './core/languages.js';
@@ -310,6 +310,24 @@ export default function (pi: ExtensionAPI) {
           'info'
         );
       }
+    }
+  });
+
+  // 4. Runtime Invariant & Ask Enforcement via before_agent_start
+  pi.on('before_agent_start', async (event: any, ctx: any) => {
+    const cwd = ctx.cwd || process.cwd();
+    const detectedLang = await detectProjectLanguage(cwd);
+    if (!detectedLang || detectedLang === 'generic') return;
+
+    const pb = await storage.getPlaybook(detectedLang);
+    if (!pb) return;
+
+    const promptText = formatPlaybookForSystemPrompt(pb);
+    if (event.systemPromptOptions?.sections) {
+      event.systemPromptOptions.sections['gentle_playbook'] = promptText;
+    } else if (event.systemPromptOptions) {
+      event.systemPromptOptions.appendSystemPrompt =
+        (event.systemPromptOptions.appendSystemPrompt || '') + '\n\n' + promptText;
     }
   });
 }
