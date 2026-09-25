@@ -97,13 +97,12 @@ cd ~/Proyectos/Gentle-playbook
 
 ## 🛠️ Modos de Uso
 
-### 1. Detección Automática en Pi (Zero-Friction)
-Cuando abrís una sesión de Pi en cualquier proyecto, el hook `session_start` inspecciona los archivos raíz:
-- Si encuentra `go.mod`, carga silenciosamente `go.md`.
-- Si encuentra `package.json`, carga `typescript.md`.
-- Si encuentra `Cargo.toml`, carga `rust.md`.
+### 1. Detección Automática & Inyección en Runtime (Zero-Friction)
+Cuando abrís una sesión de Pi en cualquier proyecto:
+1. **Notificación de inicio (`session_start`):** Inspecciona los archivos raíz (`go.mod` ➔ Go, `package.json` ➔ TypeScript, `Cargo.toml` ➔ Rust). Si existe un playbook guardado para ese lenguaje, te notifica que está activo.
+2. **Inyección en System Prompt (`before_agent_start`):** Antes de cada turno, la extensión inyecta una sección estructurada `<gentle_playbook>` directamente en las directivas del sistema del LLM.
 
-El agente recibe las normas y directivas de inmediato sin que tengas que ejecutar ningún comando.
+**Beneficio clave:** El modelo conoce tus normas no negociables (invariantes) y sus condiciones de activación (ask) **desde el token #0**, sin necesidad de ejecutar herramientas (`read`, `grep`, etc.), ahorrando turnos y tokens de contexto. El agente programa con tu estilo de inmediato.
 
 ---
 
