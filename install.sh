@@ -65,6 +65,23 @@ echo "✓ Linked CLI binary to ${CLI_BIN}"
 # 5. Register in Pi if pi is available
 if command -v pi >/dev/null 2>&1; then
   echo "🔌 Registering package in Pi..."
+  # Clean up duplicate registrations from alternate locations to prevent skill collision
+  node -e '
+    const fs = require("fs");
+    const p = `${process.env.HOME}/.pi/agent/settings.json`;
+    if (!fs.existsSync(p)) process.exit(0);
+    try {
+      const s = JSON.parse(fs.readFileSync(p, "utf8"));
+      if (Array.isArray(s.packages)) {
+        s.packages = s.packages.filter(pkg => {
+          const str = typeof pkg === "string" ? pkg : pkg.source;
+          return !str.toLowerCase().includes("gentle-playbook");
+        });
+        fs.writeFileSync(p, JSON.stringify(s, null, 2), "utf8");
+      }
+    } catch {}
+  ' 2>/dev/null || true
+
   pi install "${SRC_DIR}"
   echo "✓ Registered Gentle-Playbook package in Pi"
 else
