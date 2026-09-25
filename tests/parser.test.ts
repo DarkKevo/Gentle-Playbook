@@ -101,4 +101,42 @@ func RateLimiter() gin.HandlerFunc {
     expect(promptText).toContain('rate-limiting');
     expect(promptText).toContain('Anti-Trigger: Rutas privadas con JWT');
   });
+
+  it('should parse, serialize and format agents-preferences playbook', () => {
+    const md = `<!-- gentle-playbook:v1 lang=agents-preferences updated=2025-02-18 -->
+# Playbook: Agents Preferences
+
+## Invariants
+
+### [INVARIANT:require-write-approval] Aprobación previa de escritura
+- **Surface:** \`tools:write,tools:edit\`
+- **Rule:** No ejecutar herramientas de escritura sin presentar primero el approach y contar con aprobación explícita.
+
+## Ask Catalog
+
+### [ASK:ask-before-bash] Confirmar comandos bash destructivos
+- **Surface:** \`tools:bash\`
+- **Trigger:** Comandos destructivos o rm
+- **Anti-Trigger:** Comandos de lectura como ls o git status
+- **Prompt:** "¿Deseas ejecutar este comando destructivo?"
+- **Default:** Cancelar ejecución
+`;
+
+    const parsed = parsePlaybook(md);
+    expect(parsed.language).toBe('agents-preferences');
+    expect(parsed.invariants).toHaveLength(1);
+    expect(parsed.invariants[0].id).toBe('require-write-approval');
+    expect(parsed.askRules).toHaveLength(1);
+    expect(parsed.askRules[0].id).toBe('ask-before-bash');
+
+    const promptText = formatPlaybookForSystemPrompt(parsed);
+    expect(promptText).toContain('ACTIVE AGENT GOVERNANCE & SUPERVISION PLAYBOOK');
+    expect(promptText).toContain('require-write-approval');
+    expect(promptText).toContain('tools:write,tools:edit');
+
+    const serialized = serializePlaybook(parsed);
+    expect(serialized).toContain('# Playbook: Agents Preferences');
+    const reparsed = parsePlaybook(serialized);
+    expect(reparsed.invariants[0].description).toBe(parsed.invariants[0].description);
+  });
 });

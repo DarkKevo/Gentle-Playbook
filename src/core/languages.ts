@@ -1,3 +1,5 @@
+import { AGENTS_PREFERENCES_ID } from './schema.js';
+
 export interface SupportedLanguage {
   id: string;
   name: string;
@@ -26,9 +28,27 @@ export function getLanguageMenuLabels(): string[] {
   return SUPPORTED_LANGUAGES.map((l) => l.name);
 }
 
+export function isAgentPreferences(input: string): boolean {
+  if (!input) return false;
+  const trimmed = input.trim().toLowerCase();
+  return (
+    trimmed === AGENTS_PREFERENCES_ID ||
+    trimmed === 'agents-preferences' ||
+    trimmed === 'agent-preferences' ||
+    trimmed === 'agents' ||
+    trimmed === 'agent' ||
+    trimmed === 'agents_preferences' ||
+    trimmed === 'agent_preferences'
+  );
+}
+
 export function resolveLanguage(input: string): string {
   if (!input) return 'generic';
   const trimmed = input.trim().toLowerCase();
+
+  if (isAgentPreferences(trimmed)) {
+    return AGENTS_PREFERENCES_ID;
+  }
 
   // 1. Direct match with id
   const directId = SUPPORTED_LANGUAGES.find((l) => l.id === trimmed);

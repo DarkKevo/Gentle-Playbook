@@ -4,6 +4,7 @@ import {
   InvariantRule,
   AskRule,
   Snippet,
+  AGENTS_PREFERENCES_ID,
 } from './schema.js';
 
 export function parsePlaybook(markdown: string): Playbook {
@@ -179,15 +180,21 @@ export function serializePlaybook(playbook: Playbook): string {
 
   // 1. Metadata Header
   parts.push(`<!-- gentle-playbook:v${playbook.version} lang=${playbook.language} updated=${playbook.updatedAt} -->`);
-  parts.push(`# Playbook: ${capitalize(playbook.language)}`);
+  if (playbook.language === AGENTS_PREFERENCES_ID) {
+    parts.push('# Playbook: Agents Preferences');
+  } else {
+    parts.push(`# Playbook: ${capitalize(playbook.language)}`);
+  }
   parts.push('');
 
   // 2. Topology
-  parts.push(`## Topology: ${playbook.topology.pattern}`);
-  for (const dir of playbook.topology.directories) {
-    parts.push(`- \`${dir}\``);
+  if (playbook.language !== AGENTS_PREFERENCES_ID || playbook.topology.directories.length > 0) {
+    parts.push(`## Topology: ${playbook.topology.pattern}`);
+    for (const dir of playbook.topology.directories) {
+      parts.push(`- \`${dir}\``);
+    }
+    parts.push('');
   }
-  parts.push('');
 
   // 3. Invariants
   parts.push('## Invariants');
@@ -237,6 +244,37 @@ export function formatPlaybookForDisplay(
 ): string {
   const parts: string[] = [];
 
+  if (playbook.language === AGENTS_PREFERENCES_ID) {
+    parts.push(`# 🤖 Playbook: Agents Preferences (v${playbook.version})`);
+    parts.push(`*Supervisión y Gobernanza de Agente | Última actualización: ${playbook.updatedAt}*`);
+    parts.push('');
+
+    // 1. Invariants (Normativas)
+    parts.push('## 🛡️ Normativas de Gobernanza (Límites Operativos Obligatorios)');
+    parts.push('');
+    for (const inv of playbook.invariants) {
+      parts.push(`### [NORMATIVA] ${inv.title}`);
+      parts.push(`- **Acción / Herramienta (Surface):** \`${inv.surface}\``);
+      parts.push(`- **Límite / Regla:** ${inv.description}`);
+      parts.push('');
+    }
+
+    // 2. Ask Catalog (Condicionales)
+    parts.push('## 💡 Puntos de Control y Confirmaciones [ASK]');
+    parts.push('');
+    for (const ask of playbook.askRules) {
+      parts.push(`### [ASK] ${ask.title}`);
+      parts.push(`- **Acción (Surface):** \`${ask.surface}\``);
+      parts.push(`- **Disparador (Trigger):** ${ask.trigger}`);
+      parts.push(`- **Excepción (Anti-Trigger):** ${ask.antiTrigger}`);
+      parts.push(`- **Pregunta al Usuario:** "${ask.prompt}"`);
+      parts.push(`- **Acción por defecto:** ${ask.defaultAction}`);
+      parts.push('');
+    }
+
+    return parts.join('\n');
+  }
+
   parts.push(`# 📘 Playbook: ${capitalize(playbook.language)} (v${playbook.version})`);
   parts.push(`*Topología: ${playbook.topology.pattern} | Última actualización: ${playbook.updatedAt}*`);
   parts.push('');
@@ -282,7 +320,44 @@ export function formatPlaybookForDisplay(
   return parts.join('\n');
 }
 
+export function formatAgentPreferencesForSystemPrompt(playbook: Playbook): string {
+  const parts: string[] = [];
+
+  parts.push(`ACTIVE AGENT GOVERNANCE & SUPERVISION PLAYBOOK (v${playbook.version})`);
+  parts.push('These rules supervise and delimit your actions and tools. They do NOT alter your core personality, but define mandatory operational boundaries.');
+  parts.push('');
+
+  if (playbook.invariants.length > 0) {
+    parts.push('## MANDATORY OPERATIONAL LIMITS (INVARIANTS)');
+    parts.push('You must strictly obey these limits. Do not bypass or proceed without adhering to them:');
+    for (const inv of playbook.invariants) {
+      parts.push(`- [${inv.id}] ${inv.title} (Surface/Tools: ${inv.surface}): ${inv.description}`);
+    }
+    parts.push('');
+  }
+
+  if (playbook.askRules.length > 0) {
+    parts.push('## OPERATIONAL CHECKPOINTS (ASK CATALOG)');
+    parts.push('Whenever an action matches a Trigger and does NOT match an Anti-Trigger, you MUST pause and ask the user for approval:');
+    for (const ask of playbook.askRules) {
+      parts.push(`- [${ask.id}] ${ask.title}`);
+      parts.push(`  Surface/Tools: ${ask.surface}`);
+      parts.push(`  Trigger: ${ask.trigger}`);
+      parts.push(`  Anti-Trigger: ${ask.antiTrigger}`);
+      parts.push(`  Question to User: "${ask.prompt}"`);
+      parts.push(`  Default Action: ${ask.defaultAction}`);
+    }
+    parts.push('');
+  }
+
+  return parts.join('\n');
+}
+
 export function formatPlaybookForSystemPrompt(playbook: Playbook): string {
+  if (playbook.language === AGENTS_PREFERENCES_ID) {
+    return formatAgentPreferencesForSystemPrompt(playbook);
+  }
+
   const parts: string[] = [];
 
   parts.push(`ACTIVE ARCHITECTURAL PLAYBOOK: ${capitalize(playbook.language)} (v${playbook.version})`);

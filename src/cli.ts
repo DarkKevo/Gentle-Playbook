@@ -16,17 +16,24 @@ async function main() {
     switch (command) {
       case 'list': {
         const languages = await storage.listLanguages();
-        if (languages.length === 0) {
+        const hasAgents = await storage.hasAgentPreferences();
+        if (languages.length === 0 && !hasAgents) {
           console.log('No playbooks found in storage.');
           console.log(`Directory: ${storage.getBaseDir()}`);
           console.log('\nRun "gentle-playbook extract <path-to-repo>" to generate your first playbook.');
         } else {
           console.log('Available Gentle Playbooks:');
+          if (hasAgents) {
+            const agentPb = await storage.getAgentPreferences();
+            const invCount = agentPb?.invariants.length || 0;
+            const askCount = agentPb?.askRules.length || 0;
+            console.log(`  🤖 ${'agents-preferences'.padEnd(20)} (v${agentPb?.version || 1}) - ${invCount} normativas, ${askCount} ask rules [SUPERVISION]`);
+          }
           for (const lang of languages) {
             const pb = await storage.getPlaybook(lang);
             const invCount = pb?.invariants.length || 0;
             const askCount = pb?.askRules.length || 0;
-            console.log(`  • ${lang.padEnd(12)} (v${pb?.version || 1}) - ${invCount} invariants, ${askCount} ask rules`);
+            console.log(`  • ${lang.padEnd(20)} (v${pb?.version || 1}) - ${invCount} invariants, ${askCount} ask rules`);
           }
         }
         break;
@@ -120,10 +127,10 @@ async function main() {
       default:
         console.log('Usage: gentle-playbook <command> [options]');
         console.log('\nCommands:');
-        console.log('  list                     List all registered language playbooks');
-        console.log('  show <lang>              Display the canonical markdown playbook');
+        console.log('  list                     List all registered language playbooks & agent preferences');
+        console.log('  show <lang|agents>       Display the canonical markdown playbook');
         console.log('  extract <path> [--lang]  Extract essence from repo, diff, and merge');
-        console.log('  delete <lang>            Remove a language playbook');
+        console.log('  delete <lang|agents>     Remove a language playbook or agent preferences');
         break;
     }
   } catch (err: any) {

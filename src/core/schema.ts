@@ -1,5 +1,7 @@
 export type RuleType = 'invariant' | 'ask';
 
+export const AGENTS_PREFERENCES_ID = 'agents-preferences';
+
 export interface BaseRule {
   id: string;
   title: string;

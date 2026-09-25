@@ -63,4 +63,39 @@ describe('PlaybookStorage', () => {
     const loaded = await storage.getPlaybook('nonexistent');
     expect(loaded).toBeNull();
   });
+
+  it('should save and load agent preferences correctly without polluting listLanguages', async () => {
+    expect(await storage.hasAgentPreferences()).toBe(false);
+
+    const agentPb: Playbook = {
+      language: 'agents-preferences',
+      version: 1,
+      updatedAt: '2025-02-18',
+      topology: { pattern: 'Agent Runtime', directories: [] },
+      invariants: [
+        {
+          id: 'require-write-approval',
+          type: 'invariant',
+          title: 'Aprobación previa de escritura',
+          surface: 'tools:write,tools:edit',
+          description: 'No ejecutar write sin aprobacion.',
+        },
+      ],
+      askRules: [],
+      snippets: [],
+    };
+
+    await storage.saveAgentPreferences(agentPb);
+
+    expect(await storage.hasAgentPreferences()).toBe(true);
+    expect(await storage.listLanguages()).toEqual([]); // No debe ensuciar la lista de lenguajes
+
+    const loaded = await storage.getAgentPreferences();
+    expect(loaded).not.toBeNull();
+    expect(loaded?.invariants[0].id).toBe('require-write-approval');
+
+    // También accesible vía alias 'agents' o getPlaybook('agents')
+    const loadedViaAlias = await storage.getPlaybook('agents');
+    expect(loadedViaAlias?.invariants[0].id).toBe('require-write-approval');
+  });
 });

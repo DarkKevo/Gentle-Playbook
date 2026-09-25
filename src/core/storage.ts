@@ -1,7 +1,7 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { Playbook } from './schema.js';
+import { Playbook, AGENTS_PREFERENCES_ID } from './schema.js';
 import { parsePlaybook, serializePlaybook } from './parser.js';
 import { resolveLanguage } from './languages.js';
 
@@ -36,12 +36,30 @@ export class PlaybookStorage {
     try {
       const entries = await fs.readdir(this.baseDir, { withFileTypes: true });
       return entries
-        .filter((entry) => entry.isFile() && entry.name.endsWith('.md'))
+        .filter(
+          (entry) =>
+            entry.isFile() &&
+            entry.name.endsWith('.md') &&
+            entry.name !== `${AGENTS_PREFERENCES_ID}.md`
+        )
         .map((entry) => path.basename(entry.name, '.md'))
         .sort();
     } catch {
       return [];
     }
+  }
+
+  async hasAgentPreferences(): Promise<boolean> {
+    return this.exists(AGENTS_PREFERENCES_ID);
+  }
+
+  async getAgentPreferences(): Promise<Playbook | null> {
+    return this.getPlaybook(AGENTS_PREFERENCES_ID);
+  }
+
+  async saveAgentPreferences(playbook: Playbook): Promise<void> {
+    playbook.language = AGENTS_PREFERENCES_ID;
+    return this.savePlaybook(playbook);
   }
 
   async exists(language: string): Promise<boolean> {

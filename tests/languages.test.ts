@@ -32,5 +32,11 @@ describe('Supported Languages Catalog', () => {
     expect(resolveLanguage('rs')).toBe('rust');
     expect(resolveLanguage('cs')).toBe('csharp');
     expect(resolveLanguage('c++')).toBe('cpp');
+
+    // Agents Preferences resolution
+    expect(resolveLanguage('agents')).toBe('agents-preferences');
+    expect(resolveLanguage('agent')).toBe('agents-preferences');
+    expect(resolveLanguage('agents-preferences')).toBe('agents-preferences');
+    expect(resolveLanguage('agent-preferences')).toBe('agents-preferences');
   });
 });

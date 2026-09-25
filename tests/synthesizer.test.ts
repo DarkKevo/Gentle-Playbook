@@ -10,6 +10,13 @@ describe('Rule Synthesizer', () => {
     const askPrompt = buildSynthesisPrompt('go', 'rate limit en rutas publicas', 'ask');
     expect(askPrompt).toContain('ASK');
     expect(askPrompt).toContain('antiTrigger');
+
+    const agentInvPrompt = buildSynthesisPrompt('agents-preferences', 'no hacer write sin aprobacion', 'invariant');
+    expect(agentInvPrompt).toContain('supervisor de gobernanza operativa');
+    expect(agentInvPrompt).toContain('tools:write');
+
+    const agentAskPrompt = buildSynthesisPrompt('agents-preferences', 'preguntar antes de borrar archivos', 'ask');
+    expect(agentAskPrompt).toContain('punto de control condicional');
   });
 
   it('should parse raw JSON block for an invariant rule', () => {

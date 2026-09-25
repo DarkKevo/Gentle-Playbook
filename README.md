@@ -107,30 +107,43 @@ Cuando abrís una sesión de Pi en cualquier proyecto:
 ---
 
 ### 2. Comando Interactivo en Pi: `/gentle-playbook-add`
-Agregá nuevas preferencias o normas en tiempo real mediante un flujo guiado en 2 preguntas:
+Agregá nuevas preferencias arquitectónicas o de gobernanza mediante un flujo interactivo guiado:
 
-1. **Pregunta 1:** Seleccionás el lenguaje desde el catálogo curado:
-   `Go`, `TypeScript`, `JavaScript`, `Python`, `Rust`, `C#`, `Java`, `Kotlin`, `PHP`, `Ruby`, `C++`, etc.
-2. **Pregunta 2:** Escribís en lenguaje natural tu preferencia en una ventana de texto:
-   > *"me gusta colocar rate limit en situaciones donde son rutas peligrosas como logins de usuarios"*
-3. **Clasificación:** Elegís si es `[NORMATIVA]` o `[ASK]`.
+1. **Pregunta 1 (Categoría):** Elegís entre:
+   - 🤖 **Preferencias de Agente** (Supervisión y Gobernanza de IA)
+   - 💻 **Regla de Arquitectura de Lenguaje** (Go, TypeScript, Python, Rust, etc.)
+2. **Pregunta 2:** Escribís en lenguaje natural tu preferencia o límite operativo:
+   > *"no se hace write si no yo lo apruebo, primero el approach del cambio con código y luego mi aprobación"*
+3. **Clasificación:** Elegís si es:
+   - 🛡️ **[NORMATIVA]**: Límite operativo o invariante no negociable.
+   - 💡 **[ASK]**: Punto de control condicional o receta con pregunta previa.
 4. **Síntesis con LLM & Preview de Confirmación:**
-   El modelo estructurará la regla y te mostrará una confirmación con `Yes / No` en la terminal antes de guardarla en el playbook:
-
-```text
-¿Deseas guardar esta regla en el Playbook de GO?
-
-Título: [ASK] Rate Limiting en Autenticación
-Surface: src/shared/middlewares/
-Trigger: Rutas públicas sensibles como /login o /register
-Anti-Trigger: Rutas autenticadas internas o endpoints privados
-Pregunta: "¿Deseas aplicar el middleware de Rate Limit estándar a este endpoint?"
-Default: Omitir regla
-```
+   El modelo estructurará la regla y te mostrará una confirmación con `Yes / No` en la terminal antes de guardarla en el playbook.
 
 ---
 
-### 3. Extracción de Esencia desde un Repositorio: `extract`
+### 3. 🤖 Agents Preferences: Gobernanza y Supervisión de Agente
+
+Además de reglas arquitectónicas de código por lenguaje, `gentle-playbook` permite registrar **Preferencias de Agente** (`agents-preferences`):
+- **Límites Operativos (Normativas/Invariants):** Restricciones estrictas y no negociables sobre herramientas y comportamiento del agente (ej: requerir aprobación previa del enfoque y código antes de cualquier `write`/`edit`).
+- **Puntos de Control (Ask Catalog):** Momentos donde el agente debe detenerse y pedir confirmación antes de actuar (ej: comandos destructivos en bash, migraciones de base de datos).
+
+#### Uso y Comandos Directos:
+```bash
+/gentle-playbook add agents
+/gentle-playbook show agents
+```
+O desde la terminal:
+```bash
+gentle-playbook show agents
+```
+
+#### Enforcement Transversal en Runtime:
+A través del hook `before_agent_start`, las preferencias de agente se cargan **siempre y en cualquier proyecto** en el system prompt, supervisando las acciones del agente sin alterar su filosofía base.
+
+---
+
+### 4. Extracción de Esencia desde un Repositorio: `extract`
 Si ya tenés un proyecto de referencia donde programaste con tu estilo (por ejemplo un backend en Go):
 
 ```bash
