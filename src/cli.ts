@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import * as path from 'node:path';
+import * as fs from 'node:fs/promises';
 import * as readline from 'node:readline/promises';
 import { PlaybookStorage } from './core/storage.js';
 import { extractPlaybook, detectProjectLanguage, detectProjectLanguages } from './extract/extractor.js';
@@ -58,13 +59,36 @@ async function main() {
       }
 
       case 'extract': {
-        const targetPath = args[1];
-        if (!targetPath) {
-          console.error('Error: Path required. Usage: gentle-playbook extract <path-to-repo> [--lang <lang>]');
-          process.exit(1);
+        const inputPath = args[1]?.startsWith('--') ? undefined : args[1];
+        let resolvedPath = '';
+
+        if (!inputPath) {
+          resolvedPath = process.cwd();
+        } else {
+          const direct = path.resolve(process.cwd(), inputPath);
+          const sibling = path.resolve(process.cwd(), '..', inputPath);
+
+          let found = false;
+          try {
+            await fs.access(direct);
+            resolvedPath = direct;
+            found = true;
+          } catch {
+            try {
+              await fs.access(sibling);
+              resolvedPath = sibling;
+              found = true;
+            } catch {
+              // no encontrado
+            }
+          }
+
+          if (!found) {
+            console.error(`❌ Error: Path "${inputPath}" does not exist.`);
+            process.exit(1);
+          }
         }
 
-        const resolvedPath = path.resolve(process.cwd(), targetPath);
         console.log(`Analyzing repository: ${resolvedPath}...`);
 
         let langOverride: string | undefined;

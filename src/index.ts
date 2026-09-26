@@ -1,4 +1,5 @@
 import * as path from 'node:path';
+import * as fs from 'node:fs/promises';
 import { PlaybookStorage } from './core/storage.js';
 import { extractPlaybook, detectProjectLanguage, detectProjectLanguages } from './extract/extractor.js';
 import { runAgentExtraction } from './extract/agent-extractor.js';
@@ -299,13 +300,37 @@ export default function (pi: ExtensionAPI) {
           display: true,
         });
       } else if (sub === 'extract') {
-        const targetPath = parts[1];
-        if (!targetPath) {
-          ctx.ui?.notify('Usage: /gentle-playbook extract <path-to-repo>', 'warning');
-          return;
+        const inputPath = parts[1];
+        let resolvedPath = '';
+
+        if (!inputPath) {
+          // Sin argumento: extraer sobre el proyecto actualmente abierto
+          resolvedPath = ctx.cwd || process.cwd();
+        } else {
+          const direct = path.resolve(ctx.cwd || process.cwd(), inputPath);
+          const sibling = path.resolve(ctx.cwd || process.cwd(), '..', inputPath);
+
+          let found = false;
+          try {
+            await fs.access(direct);
+            resolvedPath = direct;
+            found = true;
+          } catch {
+            try {
+              await fs.access(sibling);
+              resolvedPath = sibling;
+              found = true;
+            } catch {
+              // no encontrado
+            }
+          }
+
+          if (!found) {
+            ctx.ui?.notify(`❌ Error: La ruta "${inputPath}" no existe.`, 'error');
+            return;
+          }
         }
 
-        const resolvedPath = path.resolve(ctx.cwd || process.cwd(), targetPath);
         ctx.ui?.notify(`Iniciando Agente Explorador de Esencia sobre ${resolvedPath}...`, 'info');
 
         try {
