@@ -100,9 +100,7 @@ export function computePlaybookDiff(
   // 2. Invariants diff
   const invariantDiffs: InvariantDiff[] = [];
   for (const inc of incoming.invariants) {
-    const match = existing.invariants.find(
-      (e) => e.id === inc.id || isSimilarTitle(e.title, inc.title)
-    );
+    const match = existing.invariants.find((e) => e.id === inc.id);
 
     if (!match) {
       invariantDiffs.push({ status: 'new', incoming: inc });
@@ -127,9 +125,7 @@ export function computePlaybookDiff(
   // 3. Ask Rules diff
   const askDiffs: AskDiff[] = [];
   for (const inc of incoming.askRules) {
-    const match = existing.askRules.find(
-      (e) => e.id === inc.id || isSimilarTitle(e.title, inc.title)
-    );
+    const match = existing.askRules.find((e) => e.id === inc.id);
 
     if (!match) {
       askDiffs.push({ status: 'new', incoming: inc });
@@ -176,7 +172,7 @@ export function computePlaybookDiff(
   const incNever = incoming.neverRules || [];
   const existNever = existing.neverRules || [];
   for (const inc of incNever) {
-    const match = existNever.find((e) => e.id === inc.id || isSimilarTitle(e.description, inc.description));
+    const match = existNever.find((e) => e.id === inc.id);
     if (!match) {
       neverDiffs.push({ status: 'new', incoming: inc });
     } else if (match.description.trim() === inc.description.trim()) {
@@ -217,7 +213,8 @@ export type ResolutionAction =
   | 'accept'
   | 'reject'
   | 'convert_to_ask'
-  | 'convert_to_invariant';
+  | 'convert_to_invariant'
+  | 'custom_edit';
 
 export interface RuleResolution {
   ruleId: string;
@@ -225,12 +222,16 @@ export interface RuleResolution {
   customTrigger?: string;
   customAntiTrigger?: string;
   customPrompt?: string;
+  customDescription?: string;
+  customSurface?: string;
+  customTitle?: string;
 }
 
 export function mergePlaybooks(
   incoming: Playbook,
   existing: Playbook | null,
-  resolutions: Record<string, RuleResolution> = {}
+  resolutions: Record<string, RuleResolution> = {},
+  precomputedDiff?: PlaybookDiffResult
 ): Playbook {
   if (!existing) {
     const playbook: Playbook = {
@@ -292,7 +293,7 @@ export function mergePlaybooks(
   const mergedAskRules = [...existing.askRules];
   const mergedSnippets = [...existing.snippets];
 
-  const diff = computePlaybookDiff(incoming, existing);
+  const diff = precomputedDiff || computePlaybookDiff(incoming, existing);
 
   // Process Invariants
   for (const invDiff of diff.invariants) {
@@ -320,17 +321,22 @@ export function mergePlaybooks(
         mergedInvariants.push(invDiff.incoming);
       }
     } else if (invDiff.status === 'conflict') {
-      // Default safety: preserve existing rule unless explicitly resolved with 'accept'
       const res = resolutions[invDiff.incoming.id];
+      const targetId = invDiff.existing?.id;
+      let idx = targetId ? mergedInvariants.findIndex((i) => i.id === targetId) : -1;
+      if (idx === -1 && invDiff.existing?.title) {
+        idx = mergedInvariants.findIndex((i) => i.title === invDiff.existing?.title);
+      }
+
       if (res && res.action === 'accept') {
         // Explicitly approved replacement
-        const idx = mergedInvariants.findIndex((i) => i.id === invDiff.existing?.id);
         if (idx >= 0) {
           mergedInvariants[idx] = invDiff.incoming;
+        } else {
+          mergedInvariants.push(invDiff.incoming);
         }
       } else if (res && res.action === 'convert_to_ask') {
         // Remove from invariants, add to askRules
-        const idx = mergedInvariants.findIndex((i) => i.id === invDiff.existing?.id);
         if (idx >= 0) mergedInvariants.splice(idx, 1);
         mergedAskRules.push({
           id: invDiff.incoming.id,
@@ -343,6 +349,19 @@ export function mergePlaybooks(
           prompt: res.customPrompt || `¿Deseas implementar ${invDiff.incoming.title}?`,
           defaultAction: 'Omitir regla',
         });
+      } else if (res && res.action === 'custom_edit') {
+        const editedRule: InvariantRule = {
+          id: invDiff.existing?.id || invDiff.incoming.id,
+          type: 'invariant',
+          title: res.customTitle || invDiff.existing?.title || invDiff.incoming.title,
+          surface: res.customSurface || invDiff.existing?.surface || invDiff.incoming.surface,
+          description: res.customDescription || invDiff.incoming.description,
+        };
+        if (idx >= 0) {
+          mergedInvariants[idx] = editedRule;
+        } else {
+          mergedInvariants.push(editedRule);
+        }
       }
       // If no explicit resolution or reject: keep existing as is (safety by default)
     }
@@ -371,11 +390,19 @@ export function mergePlaybooks(
       }
     } else if (askDiff.status === 'conflict') {
       const res = resolutions[askDiff.incoming.id];
+      const targetId = askDiff.existing?.id;
+      let idx = targetId ? mergedAskRules.findIndex((a) => a.id === targetId) : -1;
+      if (idx === -1 && askDiff.existing?.title) {
+        idx = mergedAskRules.findIndex((a) => a.title === askDiff.existing?.title);
+      }
+
       if (res && res.action === 'accept') {
-        const idx = mergedAskRules.findIndex((a) => a.id === askDiff.existing?.id);
-        if (idx >= 0) mergedAskRules[idx] = askDiff.incoming;
+        if (idx >= 0) {
+          mergedAskRules[idx] = askDiff.incoming;
+        } else {
+          mergedAskRules.push(askDiff.incoming);
+        }
       } else if (res && res.action === 'convert_to_invariant') {
-        const idx = mergedAskRules.findIndex((a) => a.id === askDiff.existing?.id);
         if (idx >= 0) mergedAskRules.splice(idx, 1);
         mergedInvariants.push({
           id: askDiff.incoming.id,
@@ -384,8 +411,24 @@ export function mergePlaybooks(
           surface: askDiff.incoming.surface,
           description: askDiff.incoming.description || askDiff.incoming.prompt,
         });
+      } else if (res && res.action === 'custom_edit') {
+        const editedRule: AskRule = {
+          id: askDiff.existing?.id || askDiff.incoming.id,
+          type: 'ask',
+          title: res.customTitle || askDiff.existing?.title || askDiff.incoming.title,
+          surface: res.customSurface || askDiff.existing?.surface || askDiff.incoming.surface,
+          trigger: res.customTrigger || askDiff.existing?.trigger || askDiff.incoming.trigger,
+          antiTrigger: res.customAntiTrigger || askDiff.existing?.antiTrigger || askDiff.incoming.antiTrigger,
+          prompt: res.customPrompt || askDiff.existing?.prompt || askDiff.incoming.prompt,
+          defaultAction: askDiff.existing?.defaultAction || askDiff.incoming.defaultAction,
+          description: res.customDescription || askDiff.incoming.description,
+        };
+        if (idx >= 0) {
+          mergedAskRules[idx] = editedRule;
+        } else {
+          mergedAskRules.push(editedRule);
+        }
       }
-      // If no explicit resolution or reject: keep existing intact
     }
   }
 
@@ -396,9 +439,18 @@ export function mergePlaybooks(
       mergedSnippets.push(snipDiff.incoming);
     } else if (snipDiff.status === 'conflict') {
       const res = resolutions[snipDiff.incoming.id];
+      const targetId = snipDiff.existing?.id;
+      let idx = targetId ? mergedSnippets.findIndex((s) => s.id === targetId) : -1;
+      if (idx === -1 && snipDiff.existing?.title) {
+        idx = mergedSnippets.findIndex((s) => s.title === snipDiff.existing?.title);
+      }
+
       if (res && res.action === 'accept') {
-        const idx = mergedSnippets.findIndex((s) => s.id === snipDiff.existing?.id);
-        if (idx >= 0) mergedSnippets[idx] = snipDiff.incoming;
+        if (idx >= 0) {
+          mergedSnippets[idx] = snipDiff.incoming;
+        } else {
+          mergedSnippets.push(snipDiff.incoming);
+        }
       }
       // Safety by default: si no hay 'accept' explícito, preservar el snippet existente
     }
@@ -412,11 +464,32 @@ export function mergePlaybooks(
       mergedNeverRules.push(nevDiff.incoming);
     } else if (nevDiff.status === 'conflict') {
       const res = resolutions[nevDiff.incoming.id];
-      if (res && res.action === 'accept') {
-        const idx = mergedNeverRules.findIndex((n) => n.id === nevDiff.existing?.id);
-        if (idx >= 0) mergedNeverRules[idx] = nevDiff.incoming;
+      const targetId = nevDiff.existing?.id;
+      let idx = targetId ? mergedNeverRules.findIndex((n) => n.id === targetId) : -1;
+      if (idx === -1 && nevDiff.existing?.description) {
+        idx = mergedNeverRules.findIndex((n) => n.description === nevDiff.existing?.description);
       }
-      // Safety by default: si no hay 'accept' explícito, preservar la regla Nunca existente
+
+      if (res && res.action === 'accept') {
+        if (idx >= 0) {
+          mergedNeverRules[idx] = nevDiff.incoming;
+        } else {
+          mergedNeverRules.push(nevDiff.incoming);
+        }
+      } else if (res && res.action === 'custom_edit') {
+        const editedRule: NeverRule = {
+          id: nevDiff.existing?.id || nevDiff.incoming.id,
+          type: 'never',
+          title: nevDiff.existing?.title || nevDiff.incoming.title,
+          surface: nevDiff.existing?.surface || nevDiff.incoming.surface || 'general',
+          description: res.customDescription || nevDiff.incoming.description,
+        };
+        if (idx >= 0) {
+          mergedNeverRules[idx] = editedRule;
+        } else {
+          mergedNeverRules.push(editedRule);
+        }
+      }
     }
   }
 
@@ -440,11 +513,6 @@ export function mergePlaybooks(
   };
 }
 
-function isSimilarTitle(t1: string, t2: string): boolean {
-  const norm1 = t1.toLowerCase().replace(/[^a-z0-9]/g, '');
-  const norm2 = t2.toLowerCase().replace(/[^a-z0-9]/g, '');
-  if (norm1 === norm2) return true;
-  return norm1.includes(norm2) || norm2.includes(norm1);
-}
+
 
 

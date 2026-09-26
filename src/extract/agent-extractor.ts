@@ -3,6 +3,7 @@ import { parsePlaybook } from '../core/parser.js';
 import { detectTopology } from './topology.js';
 import { detectProjectLanguage } from './extractor.js';
 import { buildAgentExtractorPrompt } from './prompt.js';
+import { collectProjectContext } from './context-collector.js';
 
 export interface AgentExtractionResult {
   evidenceReport: string;
@@ -66,10 +67,14 @@ export async function runAgentExtraction(
   const language = options.language || (await detectProjectLanguage(targetPath));
   const topology = await detectTopology(targetPath);
 
+  // Recolectar contexto real del repositorio (CodeGraph index o archivos de muestra)
+  const context = await collectProjectContext(targetPath, language);
+
   const prompt = buildAgentExtractorPrompt({
     targetPath,
     language,
     topology: topology.pattern,
+    contextText: context.formattedContext,
   });
 
   if (!options.completePrompt) {
@@ -79,5 +84,9 @@ export async function runAgentExtraction(
   }
 
   const rawOutput = await options.completePrompt(prompt);
-  return parseAgentOutput(rawOutput, language);
+  const result = parseAgentOutput(rawOutput, language);
+  if (result.playbook.topology.pattern === 'Standard' && topology.pattern) {
+    result.playbook.topology = topology;
+  }
+  return result;
 }

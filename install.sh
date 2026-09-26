@@ -67,25 +67,81 @@ if command -v pi >/dev/null 2>&1; then
   echo "🔌 Registering package in Pi..."
   # Clean up duplicate registrations from alternate locations to prevent skill collision
   echo "  (Checking ~/.pi/agent/settings.json to prevent duplicate registrations)"
-  node -e '
+  SRC_DIR="${SRC_DIR}" DEFAULT_INSTALL_DIR="${DEFAULT_INSTALL_DIR}" REPO_URL="${REPO_URL}" node -e '
     const fs = require("fs");
+    const path = require("path");
     const p = `${process.env.HOME}/.pi/agent/settings.json`;
     if (!fs.existsSync(p)) process.exit(0);
+
+    function isGentlePlaybook(pkg) {
+      if (pkg && typeof pkg === "object" && pkg.name === "gentle-playbook") return true;
+
+      let str = null;
+      if (typeof pkg === "string") {
+        str = pkg;
+      } else if (pkg && typeof pkg === "object" && typeof pkg.source === "string") {
+        str = pkg.source;
+      }
+      if (!str) return false;
+
+      const clean = s => s.replace(/\/+$/, "").replace(/\.git$/, "");
+      const targetClean = clean(str);
+
+      const repoClean = clean(process.env.REPO_URL || "https://github.com/DarkKevo/Gentle-Playbook");
+      if (
+        targetClean.toLowerCase() === repoClean.toLowerCase() ||
+        targetClean.toLowerCase().endsWith("github.com/darkkevo/gentle-playbook")
+      ) {
+        return true;
+      }
+
+      const knownDirs = [
+        process.env.SRC_DIR,
+        process.env.DEFAULT_INSTALL_DIR,
+        `${process.env.HOME}/.local/share/gentle-playbook`
+      ].filter(Boolean).map(clean);
+
+      if (knownDirs.includes(targetClean)) return true;
+
+      try {
+        if (fs.existsSync(str)) {
+          const pkgJsonPath = path.join(str, "package.json");
+          if (fs.existsSync(pkgJsonPath)) {
+            const pkgData = JSON.parse(fs.readFileSync(pkgJsonPath, "utf8"));
+            if (pkgData && pkgData.name === "gentle-playbook") return true;
+          }
+        }
+      } catch {}
+
+      return false;
+    }
+
     try {
       const s = JSON.parse(fs.readFileSync(p, "utf8"));
       if (Array.isArray(s.packages)) {
-        const originalCount = s.packages.length;
-        s.packages = s.packages.filter(pkg => {
-          const str = typeof pkg === "string" ? pkg : pkg.source;
-          return !str.toLowerCase().includes("gentle-playbook");
-        });
-        if (s.packages.length !== originalCount) {
-          console.log("  ✓ Cleaned up previous gentle-playbook package entries in settings.json");
+        const removed = [];
+        const kept = [];
+        for (const pkg of s.packages) {
+          if (isGentlePlaybook(pkg)) {
+            const id = typeof pkg === "string" ? pkg : (pkg.source || pkg.name || JSON.stringify(pkg));
+            removed.push(id);
+          } else {
+            kept.push(pkg);
+          }
+        }
+        if (removed.length > 0) {
+          for (const rem of removed) {
+            console.log(`  - Removing duplicate registration: ${rem}`);
+          }
+          s.packages = kept;
           fs.writeFileSync(p, JSON.stringify(s, null, 2), "utf8");
+          console.log(`  ✓ Cleaned up ${removed.length} previous gentle-playbook package entry/entries in settings.json`);
         }
       }
-    } catch {}
-  ' 2>/dev/null || true
+    } catch (err) {
+      console.warn("  ⚠ Warning reading ~/.pi/agent/settings.json:", err.message);
+    }
+  ' || true
 
   pi install "${SRC_DIR}"
   echo "✓ Registered Gentle-Playbook package in Pi"

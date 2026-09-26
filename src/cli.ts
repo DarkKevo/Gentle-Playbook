@@ -4,8 +4,7 @@ import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
 import * as readline from 'node:readline/promises';
 import { PlaybookStorage } from './core/storage.js';
-import { extractPlaybook, detectProjectLanguage, detectProjectLanguages } from './extract/extractor.js';
-import { computePlaybookDiff, mergePlaybooks } from './core/diff.js';
+import { detectProjectLanguages } from './extract/extractor.js';
 import { serializePlaybook } from './core/parser.js';
 import { resolveLanguage, resolveLanguageStrict, SUPPORTED_LANGUAGES } from './core/languages.js';
 import { InvariantRule, AskRule, NeverRule, Playbook } from './core/schema.js';
@@ -23,7 +22,7 @@ async function main() {
         if (languages.length === 0 && !hasAgents) {
           console.log('No playbooks found in storage.');
           console.log(`Directory: ${storage.getBaseDir()}`);
-          console.log('\nRun "gentle-playbook extract <path-to-repo>" to generate your first playbook.');
+          console.log('\nRun "/gentle-playbook extract" inside Pi to generate your first playbook with the Agent.');
         } else {
           console.log('Available Gentle Playbooks:');
           if (hasAgents) {
@@ -89,73 +88,20 @@ async function main() {
           }
         }
 
-        console.log(`Analyzing repository: ${resolvedPath}...`);
-
-        let langOverride: string | undefined;
-        const langIdx = args.indexOf('--lang');
-        if (langIdx >= 0 && args[langIdx + 1]) {
-          langOverride = args[langIdx + 1];
-        }
-
-        let detectedLang: string;
-
-        if (langOverride) {
-          detectedLang = resolveLanguage(langOverride);
-          console.log(`Language override specified: ${detectedLang}`);
-        } else {
-          const langResult = await detectProjectLanguages(resolvedPath);
-          detectedLang = langResult.primary;
-          if (langResult.isMonorepo) {
-            const countsDesc = langResult.detected
-              .map((l) => `${l} (${langResult.counts[l] || 0} files)`)
-              .join(', ');
-            console.log(`ℹ Multiple languages detected: ${countsDesc}`);
-            console.log(`  Predominant language chosen: '${detectedLang}' (Use --lang <lang> to override)`);
-          } else {
-            console.log(`Detected Language: ${detectedLang}`);
-          }
-        }
-
-        const draft = await extractPlaybook(resolvedPath, { language: detectedLang });
-        const existing = await storage.getPlaybook(detectedLang);
-
-        const diff = computePlaybookDiff(draft, existing);
+        const langResult = await detectProjectLanguages(resolvedPath);
+        const detectedLang = langResult.primary;
 
         console.log('\n========================================');
-        console.log(` Diff Report for ${detectedLang.toUpperCase()}`);
-        console.log('========================================');
-        console.log(`Topology: ${draft.topology.pattern}`);
-        console.log(`New Rules: ${diff.stats.newRules} | Identical: ${diff.stats.identicalRules} | Conflicts: ${diff.stats.conflictRules}\n`);
-
-        console.log('--- INVARIANTS ---');
-        for (const inv of diff.invariants) {
-          const badge = inv.status === 'new' ? '[NEW]' : inv.status === 'identical' ? '[IDENTICAL]' : '[CONFLICT]';
-          console.log(`  ${badge.padEnd(12)} ${inv.incoming.title} (${inv.incoming.surface})`);
-          if (inv.reason) console.log(`               Reason: ${inv.reason}`);
-        }
-
-        console.log('\n--- ASK RULES (Conditional / Recipes) ---');
-        for (const ask of diff.askRules) {
-          const badge = ask.status === 'new' ? '[NEW]' : ask.status === 'identical' ? '[IDENTICAL]' : '[CONFLICT]';
-          console.log(`  ${badge.padEnd(12)} ${ask.incoming.title}`);
-          console.log(`               Trigger: ${ask.incoming.trigger}`);
-          console.log(`               Prompt: "${ask.incoming.prompt}"`);
-        }
-
-        if (diff.neverRules && diff.neverRules.length > 0) {
-          console.log('\n--- NUNCA (Deliberate Absences) ---');
-          for (const nev of diff.neverRules) {
-            const badge = nev.status === 'new' ? '[NEW]' : nev.status === 'identical' ? '[IDENTICAL]' : '[CONFLICT]';
-            console.log(`  ${badge.padEnd(12)} ${nev.incoming.description}`);
-          }
-        }
-
-        // Auto-merge with default accept for CLI mode
-        const merged = mergePlaybooks(draft, existing);
-        await storage.savePlaybook(merged);
-
-        console.log('\n✓ Playbook merged and saved successfully!');
-        console.log(`Storage location: ${path.join(storage.getBaseDir(), `${detectedLang}.md`)}`);
+        console.log('  Gentle-Playbook: Extracción de Esencia');
+        console.log('========================================\n');
+        console.log(`ℹ Proyecto detectado: ${resolvedPath}`);
+        console.log(`  Lenguaje principal: ${detectedLang}`);
+        console.log(`\n⚠ La extracción de normas arquitectónicas es un proceso agéntico asistido por IA.`);
+        console.log(`  Requiere razonamiento contextual, conteo de evidencia empírica y aprobación interactiva.`);
+        console.log(`\n👉 Para extraer este playbook con el Agente de Pi, abrí Pi y ejecutá:\n`);
+        const cmd = inputPath ? `/gentle-playbook extract ${inputPath}` : '/gentle-playbook extract';
+        console.log(`   ${cmd}\n`);
+        console.log('========================================\n');
         break;
       }
 

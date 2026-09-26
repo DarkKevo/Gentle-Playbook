@@ -2,6 +2,7 @@ export interface AgentPromptOptions {
   targetPath: string;
   language: string;
   topology: string;
+  contextText?: string;
 }
 
 export function buildAgentExtractorPrompt(options: AgentPromptOptions): string {
@@ -61,6 +62,9 @@ Inspecciona con herramientas de lectura o búsqueda entre 3 y 6 archivos represe
 - Máximo 15 líneas por snippet canónico.
 - Sanitiza credenciales o nombres sensibles.
 
+${options.contextText ? `---
+
+${options.contextText}` : ''}
 ---
 
 ## FORMATO DE RESPUESTA REQUERIDO

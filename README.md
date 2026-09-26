@@ -143,30 +143,40 @@ A través del hook `before_agent_start`, las preferencias de agente se cargan **
 
 ---
 
-### 4. Extracción de Esencia desde un Repositorio: `extract`
+### 4. Extracción de Esencia desde un Repositorio: `/gentle-playbook extract`
 Si ya tenés un proyecto de referencia donde programaste con tu estilo (por ejemplo un backend en Go, un servicio en TypeScript, Rust o Python):
 
 ```bash
-# Dentro de Pi (Recomendado: Agente Explorador con Evidencia y Confirmación)
-/gentle-playbook extract /ruta/a/mi-backend
-
-# O desde la terminal (CLI)
-gentle-playbook extract /ruta/a/mi-backend [--lang go]
+# Dentro de Pi (TUI: Agente Explorador con CodeGraph, Diff Semántico y Arbitraje 1 a 1)
+/gentle-playbook extract [/ruta/al/repo] [--lang <lenguaje>]
 ```
 
-#### 🧠 ¿Cómo funciona la extracción inteligente con Agente en Pi?
-A diferencia de herramientas que buscan palabras fijas o aplican linters genéricos, `/gentle-playbook extract` despliega un **Agente Explorador de Esencia** que aplica ingeniería inversa bajo una metodología rigurosa de 4 fases:
+> **Nota sobre el CLI:** La extracción de normas arquitectónicas es un proceso agéntico asistido por IA que requiere razonamiento profundo, lectura de manifiestos y aprobación interactiva. Si ejecutás `gentle-playbook extract` desde una terminal común, la herramienta detecta tu proyecto y te orienta a correrlo dentro de Pi, sin persistir jamás archivos vacíos ni fingir análisis estáticos offline.
 
-1. **Reconocimiento y Detección de Monorepos:** Identifica el tipo de proyecto (`api-http`, `cli`, `frontend`, `worker/pipeline`, etc.). Si coexisten múltiples manifiestos (`go.mod`, `package.json`), pondera automáticamente por el conteo real de archivos de código para determinar el lenguaje predominante (respetando `--lang` si lo especificás).
-2. **La Regla de Oro: "Elección vs Imposición":** El agente evalúa si existía una alternativa razonable en ese stack y qué eligió el autor consistentemente. Descarta lo obvio impuesto por el lenguaje/framework y captura la verdadera huella digital arquitectónica.
+#### 🧠 ¿Cómo funciona la extracción y el arbitraje agéntico en Pi?
+A diferencia de herramientas que buscan palabras fijas o linters de juguete, `/gentle-playbook extract` despliega un **Agente Explorador de Esencia** respaldado por **CodeGraph**:
+
+1. **Exploración Profunda con CodeGraph & Fallback Nativo:**
+   - Si `codegraph` está disponible en tu sistema (`CODEGRAPH_BIN`), el agente indexa el repositorio completo (`codegraph ensureIndex`) y extrae el mapa integral de símbolos, interfaces, handlers, middlewares y tipos con sus números de línea exactos.
+   - Si CodeGraph no está presente, inspecciona el árbol de archivos y manifiestos de dependencias (`package.json`, `go.mod`, `Cargo.toml`, etc.) de forma nativa.
+2. **La Regla de Oro: "Elección vs Imposición":** El agente evalúa si existía una alternativa razonable en ese stack y qué eligió el autor consistentemente. Descarta lo obvio impuesto por el framework y captura la verdadera huella digital arquitectónica.
 3. **Verificación Cuantitativa (Evidencia Contada):** No generaliza por intuición. Cuenta casos reales (`cumple / total`) y busca activamente contraejemplos:
    - **≥ 90% y ≥ 5 casos:** Se registra como **Normativa Invariante (`INVARIANT`)**.
    - **60-89% o condicional a contexto:** Se registra como **Punto de Control / Receta (`ASK_RULE`)**.
    - **< 60% o < 3 casos:** Se descarta como ruido.
-4. **Ausencias Deliberadas (`Nunca`):** Identifica lo que el proyecto evita sistemáticamente cuando era una opción disponible (ej: "No usar ORM; queries en SQL explícito", "No usar globals", "Sin `any`").
-5. **Reporte de Evidencia & Confirmación Previa:** Antes de tocar el disco, Pi te muestra una tabla de evidencia con `archivo:línea` de cada regla detectada y te pide confirmación explícita (`Yes / No`) para guardar o fusionar los cambios con tu playbook existente.
-
-*(Nota: En modo CLI sin LLM activo, `gentle-playbook extract` utiliza un motor estático de topología y patrones de referencia para Go).*
+4. **Ausencias Deliberadas (`Nunca`):** Identifica lo que el proyecto evita sistemáticamente cuando era una opción disponible (ej: *"No usar ORM; queries en SQL explícito"*, *"No usar globals"*, *"Sin `any`"*).
+5. **Arbitraje Semántico con IA (Sin comparaciones fijas por ID):**
+   - Cuando ya existe un playbook previo para ese lenguaje, el modelo compara conceptualmente el borrador extraído con tus reglas guardadas.
+   - Detecta **redundancias semánticas** (reglas que dicen lo mismo con palabras distintas, como *"No usar interfaces Any"* vs *"No usar una interfaz que reciba cualquier tipo de dato"*) y **contradicciones directas** (ej: *"Usar Enums obligatorios"* vs *"Prohibir Enums"*).
+   - Si el agente se interrumpe o falla, aborta limpiamente sin corromper el playbook.
+6. **Resolución Interactiva de Conflictos 1 a 1 en el TUI:**
+   Para cada conflicto detectado, Pi te muestra una tarjeta comparativa de la versión actual guardada vs la nueva propuesta y te permite elegir:
+   - `🛡️ 1. Conservar versión actual`
+   - `📥 2. Reemplazar por la nueva versión`
+   - `💡 3. Convertir en regla condicional (Ask Rule)`
+   - `🤖 4. Instruir a la IA para fusionar/resolver` *(le das una indicación en lenguaje natural y la IA redacta la síntesis definitiva entre A y B)*
+   - `❌ Cancelar todo el merge` *(aborta de inmediato sin tocar el disco)*
+7. **Persistencia con Confirmación Previa:** Nada se escribe en disco sin que vos confirmes explícitamente el guardado final.
 
 ---
 
@@ -282,6 +292,21 @@ Incluye tests de:
 - Catálogo oficial de lenguajes y normalización de alias.
 - Síntesis de reglas mediante prompts estructurados.
 - Extracción en vivo contra repositorios reales usando CodeGraph.
+
+---
+
+## 🛡️ Seguridad & Blindaje contra Prompt Injection
+
+Los playbooks contienen normas que se inyectan en el prompt de sistema del modelo. Para evitar ataques de hijacking de instrucciones o ejecución no autorizada (Issue #6):
+
+1. **Framing de Convenciones Técnicas (No Órdenes Militares):**
+   El formateador no utiliza imperativos absolutos como *"NON-NEGOTIABLE / Do not ask for permission"*. El system prompt encuadra el playbook honestamente como un conjunto de **convenciones y estándares de diseño de código** que no alteran las instrucciones operativas ni las políticas de seguridad de Pi.
+2. **Delimitación Estructurada:**
+   Cada regla se inyecta encapsulada en tags XML semánticos (`<convention id="..." surface="...">`, `<checkpoint>`, `<prohibition>`), delimitándola claramente como un **dato de referencia arquitectónica** y no como una orden en lenguaje natural dirigida al asistente.
+3. **Sanitización de Entrada (`sanitizeRuleText`):**
+   Toda regla pasa por un filtro de saneamiento que neutraliza intentos comunes de jailbreak o meta-instrucciones (`ignore previous instructions`, `new system prompt`, etc.) y trunca descripciones a longitudes seguras (máx. 500 caracteres).
+4. **Consentimiento Humano Obligatorio:**
+   Ningún comando persiste reglas en disco de forma automática sin confirmación previa del usuario.
 
 ---
 

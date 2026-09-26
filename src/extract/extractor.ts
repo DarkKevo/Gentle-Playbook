@@ -1,14 +1,10 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { Playbook } from '../core/schema.js';
-import { CodeGraphWrapper } from './codegraph.js';
 import { detectTopology } from './topology.js';
-import { CodePatternAnalyzer } from './analyzer.js';
+import { runAgentExtraction, AgentExtractorOptions } from './agent-extractor.js';
 
-export interface ExtractOptions {
-  language?: string;
-  codeGraph?: CodeGraphWrapper;
-}
+export interface ExtractOptions extends AgentExtractorOptions {}
 
 export interface LanguageDetectionResult {
   primary: string;
@@ -124,34 +120,6 @@ export async function extractPlaybook(
   projectPath: string,
   options: ExtractOptions = {}
 ): Promise<Playbook> {
-  const language = options.language || (await detectProjectLanguage(projectPath));
-  const cg = options.codeGraph || new CodeGraphWrapper();
-
-  // 1. Ensure CodeGraph is available
-  const isAvailable = await cg.isAvailable();
-  if (!isAvailable) {
-    throw new Error(
-      `CodeGraph binary ('${(cg as any).binaryPath || 'codegraph'}') not found in PATH.\nPlease install CodeGraph or set the CODEGRAPH_BIN environment variable.`
-    );
-  }
-
-  // 2. Ensure CodeGraph index is ready
-  await cg.ensureIndex(projectPath);
-
-  // 3. Topology Detection
-  const topology = await detectTopology(projectPath);
-
-  // 4. Pattern & Invariant Analysis
-  const analyzer = new CodePatternAnalyzer(cg);
-  const { invariants, askRules, snippets } = await analyzer.analyze(projectPath);
-
-  return {
-    language,
-    version: 1,
-    updatedAt: new Date().toISOString().split('T')[0],
-    topology,
-    invariants,
-    askRules,
-    snippets,
-  };
+  const result = await runAgentExtraction(projectPath, options);
+  return result.playbook;
 }

@@ -183,4 +183,13 @@ describe('CLI Integration (Sandboxed & Safe Deletion)', () => {
     const tsPb = await storage.getPlaybook('typescript');
     expect(tsPb).toBeNull();
   });
+
+  it('should guide user to Pi for extract command without writing empty playbooks', async () => {
+    const { stdout } = await execFileAsync('node', [cliPath, 'extract', '.'], {
+      env: { ...process.env, GENTLE_PLAYBOOK_DIR: tmpDir },
+    });
+    expect(stdout).toContain('Gentle-Playbook: Extracción de Esencia');
+    expect(stdout).toContain('proceso agéntico asistido por IA');
+    expect(stdout).toContain('/gentle-playbook extract');
+  });
 });

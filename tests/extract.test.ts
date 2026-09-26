@@ -3,7 +3,6 @@ import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { detectProjectLanguage, extractPlaybook } from '../src/extract/extractor.js';
 import { detectTopology } from '../src/extract/topology.js';
-import { CodeGraphWrapper } from '../src/extract/codegraph.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -22,36 +21,45 @@ describe('Extraction Engine with Local Fixture', () => {
     expect(topology.directories.some((d) => d.includes('adapters'))).toBe(true);
   });
 
-  it('should extract invariants, ask rules and snippets from fixture using CodeGraph', async () => {
-    const cg = new CodeGraphWrapper();
-    const isAvail = await cg.isAvailable();
-    if (!isAvail) {
-      console.warn('CodeGraph binary not available, skipping live extraction test');
-      return;
-    }
+  it('should require completePrompt when running agent extraction', async () => {
+    await expect(extractPlaybook(fixturePath)).rejects.toThrow(
+      /No se proveyó una función para ejecutar el prompt del agente/
+    );
+  });
 
-    const playbook = await extractPlaybook(fixturePath, { codeGraph: cg });
+  it('should extract playbook via agent completion', async () => {
+    const mockOutput = `=== REPORTE DE EVIDENCIA ===
+| E1 | Null-Byte Sanitizer | INVARIANT | 10/10 | internal/adapters/sanitizer.go:12 | ninguno |
+
+=== PLAYBOOK COMPACTO ===
+\`\`\`markdown
+---
+source: ${fixturePath}
+lang: go
+project_type: api-http
+stack: chi, pgx
+extracted: 2026-03-30
+---
+
+## Estructura
+- cmd/api/
+- internal/adapters/
+
+## Invariants
+- [H1] Interceptar y rechazar peticiones HTTP con caracteres nulos.
+
+## Ask Rules
+- [H2] SI la ruta es administrativa → ¿Deseas aplicar middleware de RBAC?
+\`\`\`
+`;
+    const playbook = await extractPlaybook(fixturePath, {
+      completePrompt: async () => mockOutput,
+    });
 
     expect(playbook.language).toBe('go');
     expect(playbook.topology.pattern).toContain('Hexagonal');
-
-    // Invariants must include null-byte sanitizer, DTO validation, and API response envelope
-    const hasSanitizer = playbook.invariants.some((i) => i.id === 'null-byte-sanitizer');
-    const hasNotBlank = playbook.invariants.some((i) => i.id === 'dto-notblank-validation');
-    const hasResponse = playbook.invariants.some((i) => i.id === 'api-response-envelope');
-
-    expect(hasSanitizer).toBe(true);
-    expect(hasNotBlank).toBe(true);
-    expect(hasResponse).toBe(true);
-
-    // Ask rules must include RBAC
-    const hasRBAC = playbook.askRules.some((a) => a.id === 'rbac-authorization');
-    expect(hasRBAC).toBe(true);
-
-    // Snippets must be captured with actual source code
-    expect(playbook.snippets.length).toBeGreaterThanOrEqual(2);
-    const sanitizerSnippet = playbook.snippets.find((s) => s.id === 'canonical-null-byte-sanitizer');
-    expect(sanitizerSnippet).toBeDefined();
-    expect(sanitizerSnippet?.code).toContain('SanitizeInputMiddleware');
+    expect(playbook.invariants.length).toBe(1);
+    expect(playbook.invariants[0].description).toContain('caracteres nulos');
+    expect(playbook.askRules.length).toBe(1);
   });
 });

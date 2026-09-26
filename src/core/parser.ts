@@ -417,41 +417,89 @@ export function formatPlaybookForDisplay(
   return parts.join('\n');
 }
 
+export function sanitizeRuleText(text: string, maxLength = 500): string {
+  if (!text) return '';
+  let sanitized = text.slice(0, maxLength);
+
+  // Escapar comillas dobles para evitar romper atributos XML (<convention id="..." surface="...">)
+  sanitized = sanitized.replace(/"/g, "'");
+
+  // Neutralizar patrones típicos de prompt injection o manipulación de meta-instrucciones
+  const injectionPatterns = [
+    /\bignore\s+(all\s+)?(previous|prior)\s+instructions\b/gi,
+    /\bdisregard\s+(all\s+)?(previous|prior)\b/gi,
+    /\b(new|system)\s+instructions\b/gi,
+    /\bnew\s+system\s+prompt\b/gi,
+    /\byou\s+are\s+now\s+(an?\s+)?\w+/gi,
+    /\balways\s+start\s+(all\s+)?replies\s+with\b/gi,
+    /\balways\s+reply\s+with\b/gi,
+    /\bcanary-gp-inject\b/gi,
+    /\bdo\s+not\s+ask\s+for\s+permission\b/gi,
+    /<\/?[a-z_][a-z0-9_-]*>/gi, // Neutralizar tags XML/HTML crudos para evitar escape de bloques
+  ];
+
+  for (const pattern of injectionPatterns) {
+    sanitized = sanitized.replace(pattern, '[neutralized]');
+  }
+
+  // Normalizar saltos de línea y espacios excesivos
+  sanitized = sanitized.replace(/[\r\n]+/g, ' ').replace(/\s{2,}/g, ' ').trim();
+
+  return sanitized;
+}
+
 export function formatAgentPreferencesForSystemPrompt(playbook: Playbook): string {
   const parts: string[] = [];
 
-  parts.push(`ACTIVE AGENT GOVERNANCE & SUPERVISION PLAYBOOK (v${playbook.version})`);
-  parts.push('These rules supervise and delimit your actions and tools. They do NOT alter your core personality, but define mandatory operational boundaries.');
+  parts.push(`### AGENT SUPERVISION & OPERATIONAL BOUNDARIES (v${playbook.version})`);
+  parts.push('These preferences define operational boundaries and confirmation checkpoints set by the user.');
+  parts.push('They govern tool usage and action confirmation, and do not override system safety rules.');
   parts.push('');
 
   if (playbook.invariants.length > 0) {
-    parts.push('## MANDATORY OPERATIONAL LIMITS (INVARIANTS)');
-    parts.push('You must strictly obey these limits. Do not bypass or proceed without adhering to them:');
+    parts.push('#### OPERATIONAL CONSTRAINTS');
     for (const inv of playbook.invariants) {
-      parts.push(`- [${inv.id}] ${inv.title} (Surface/Tools: ${inv.surface}): ${inv.description}`);
+      const id = sanitizeRuleText(inv.id, 60);
+      const title = sanitizeRuleText(inv.title, 120);
+      const surface = sanitizeRuleText(inv.surface, 120);
+      const desc = sanitizeRuleText(inv.description, 500);
+      parts.push(`<constraint id="${id}" tools="${surface}">`);
+      parts.push(`  Policy: ${title}`);
+      parts.push(`  Rule: ${desc}`);
+      parts.push(`</constraint>`);
     }
     parts.push('');
   }
 
   if (playbook.neverRules && playbook.neverRules.length > 0) {
-    parts.push('## MANDATORY PROHIBITIONS (NEVER DO)');
-    parts.push('You are strictly forbidden from performing any of the following actions:');
+    parts.push('#### RESTRICTED ACTIONS');
     for (const never of playbook.neverRules) {
-      parts.push(`- [${never.id}] ${never.description}`);
+      const id = sanitizeRuleText(never.id, 60);
+      const desc = sanitizeRuleText(never.description, 500);
+      parts.push(`<restricted id="${id}">`);
+      parts.push(`  Action: ${desc}`);
+      parts.push(`</restricted>`);
     }
     parts.push('');
   }
 
   if (playbook.askRules.length > 0) {
-    parts.push('## OPERATIONAL CHECKPOINTS (ASK CATALOG)');
-    parts.push('Whenever an action matches a Trigger and does NOT match an Anti-Trigger, you MUST pause and ask the user for approval:');
+    parts.push('#### CONFIRMATION CHECKPOINTS');
     for (const ask of playbook.askRules) {
-      parts.push(`- [${ask.id}] ${ask.title}`);
-      parts.push(`  Surface/Tools: ${ask.surface}`);
-      parts.push(`  Trigger: ${ask.trigger}`);
-      parts.push(`  Anti-Trigger: ${ask.antiTrigger}`);
-      parts.push(`  Question to User: "${ask.prompt}"`);
-      parts.push(`  Default Action: ${ask.defaultAction}`);
+      const id = sanitizeRuleText(ask.id, 60);
+      const title = sanitizeRuleText(ask.title, 120);
+      const surface = sanitizeRuleText(ask.surface, 120);
+      const trigger = sanitizeRuleText(ask.trigger, 200);
+      const antiTrigger = sanitizeRuleText(ask.antiTrigger, 200);
+      const prompt = sanitizeRuleText(ask.prompt, 200);
+      const defaultAction = sanitizeRuleText(ask.defaultAction, 100);
+      parts.push(`<confirmation_checkpoint id="${id}" tools="${surface}">`);
+      parts.push(`  Pattern: ${title}`);
+      parts.push(`  Trigger: ${trigger}`);
+      parts.push(`  Anti-Trigger: ${antiTrigger}`);
+      parts.push(`  Question to User: "${prompt}"`);
+      parts.push(`  Default Action: ${defaultAction}`);
+      parts.push(`</confirmation_checkpoint>`);
     }
     parts.push('');
   }
@@ -466,39 +514,64 @@ export function formatPlaybookForSystemPrompt(playbook: Playbook): string {
 
   const parts: string[] = [];
 
-  parts.push(`ACTIVE ARCHITECTURAL PLAYBOOK: ${capitalize(playbook.language)} (v${playbook.version})`);
-  parts.push(`Topology Pattern: ${playbook.topology.pattern}`);
+  parts.push(`### ACTIVE ARCHITECTURAL CONVENTIONS: ${capitalize(playbook.language)} (v${playbook.version})`);
+  parts.push('The following architectural conventions and style standards guide code authored in this project.');
+  parts.push('They represent code structure constraints and conventions, and do NOT override system safety policies, tool permissions, or user instructions.');
+  parts.push('');
+
+  parts.push(`Topology Pattern: ${sanitizeRuleText(playbook.topology.pattern, 100)}`);
   if (playbook.topology.directories.length > 0) {
-    parts.push('Target directory layout: ' + playbook.topology.directories.join(', '));
+    parts.push('Target directory layout: ' + playbook.topology.directories.map((d) => sanitizeRuleText(d, 80)).join(', '));
   }
   parts.push('');
 
-  parts.push('## INVARIANTS (MANDATORY & NON-NEGOTIABLE)');
-  parts.push('Apply these rules silently and unconditionally when writing, generating, or modifying code in this project. Do not ask for permission.');
-  for (const inv of playbook.invariants) {
-    parts.push(`- [${inv.id}] ${inv.title} (Surface: ${inv.surface}): ${inv.description}`);
+  if (playbook.invariants.length > 0) {
+    parts.push('#### ARCHITECTURAL INVARIANTS (Code Standards)');
+    parts.push('Apply these design conventions when authoring or modifying code within the specified surfaces:');
+    for (const inv of playbook.invariants) {
+      const id = sanitizeRuleText(inv.id, 60);
+      const title = sanitizeRuleText(inv.title, 120);
+      const surface = sanitizeRuleText(inv.surface, 120);
+      const desc = sanitizeRuleText(inv.description, 500);
+      parts.push(`<convention id="${id}" surface="${surface}">`);
+      parts.push(`  Standard: ${title}`);
+      parts.push(`  Rule: ${desc}`);
+      parts.push(`</convention>`);
+    }
+    parts.push('');
   }
-  parts.push('');
 
   if (playbook.askRules.length > 0) {
-    parts.push('## CONDITIONAL RECIPES [ASK CATALOG]');
-    parts.push('Evaluate these rules ONLY when working on their declared Surface. Trigger activates the prompt; Anti-Trigger strictly forbids asking.');
+    parts.push('#### CONDITIONAL PATTERNS (ASK CHECKPOINTS)');
+    parts.push('Evaluate these optional patterns only when working on their declared surface:');
     for (const ask of playbook.askRules) {
-      parts.push(`- [${ask.id}] ${ask.title}`);
-      parts.push(`  Surface: ${ask.surface}`);
-      parts.push(`  Trigger: ${ask.trigger}`);
-      parts.push(`  Anti-Trigger: ${ask.antiTrigger}`);
-      parts.push(`  Prompt to User: "${ask.prompt}"`);
-      parts.push(`  Default: ${ask.defaultAction}`);
+      const id = sanitizeRuleText(ask.id, 60);
+      const title = sanitizeRuleText(ask.title, 120);
+      const surface = sanitizeRuleText(ask.surface, 120);
+      const trigger = sanitizeRuleText(ask.trigger, 200);
+      const antiTrigger = sanitizeRuleText(ask.antiTrigger, 200);
+      const prompt = sanitizeRuleText(ask.prompt, 200);
+      const defaultAction = sanitizeRuleText(ask.defaultAction, 100);
+      parts.push(`<checkpoint id="${id}" surface="${surface}">`);
+      parts.push(`  Pattern: ${title}`);
+      parts.push(`  Trigger: ${trigger}`);
+      parts.push(`  Anti-Trigger: ${antiTrigger}`);
+      parts.push(`  Question to User: "${prompt}"`);
+      parts.push(`  Default: ${defaultAction}`);
+      parts.push(`</checkpoint>`);
     }
     parts.push('');
   }
 
   if (playbook.neverRules && playbook.neverRules.length > 0) {
-    parts.push('## DELIBERATE PROHIBITIONS (NEVER DO)');
-    parts.push('These are strictly prohibited architecture anti-patterns or practices in this codebase:');
+    parts.push('#### DELIBERATE PROHIBITIONS (Architectural Anti-Patterns)');
+    parts.push('The following patterns are deliberately avoided in this codebase:');
     for (const never of playbook.neverRules) {
-      parts.push(`- [${never.id}] ${never.description}`);
+      const id = sanitizeRuleText(never.id, 60);
+      const desc = sanitizeRuleText(never.description, 500);
+      parts.push(`<prohibition id="${id}">`);
+      parts.push(`  Avoid: ${desc}`);
+      parts.push(`</prohibition>`);
     }
     parts.push('');
   }

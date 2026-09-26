@@ -88,7 +88,7 @@ describe('Gentle Playbook Extension Hooks', () => {
 
     const injected = event.systemPromptOptions.sections['gentle_playbook'];
     expect(injected).toBeDefined();
-    expect(injected).toContain('ACTIVE AGENT GOVERNANCE & SUPERVISION PLAYBOOK');
+    expect(injected).toContain('AGENT SUPERVISION & OPERATIONAL BOUNDARIES');
     expect(injected).toContain('require-write-approval');
     expect(injected).toContain('tools:write,tools:edit');
     expect(injected).toContain('¿Autorizas este comando destructivo?');
@@ -134,8 +134,120 @@ describe('Gentle Playbook Extension Hooks', () => {
 
     const injected = event.systemPromptOptions.sections['gentle_playbook'];
     expect(injected).toBeDefined();
-    expect(injected).toContain('MANDATORY PROHIBITIONS (NEVER DO)');
+    expect(injected).toContain('RESTRICTED ACTIONS');
     expect(injected).toContain('no-push-to-main');
     expect(injected).toContain('No hacer git push directo a la rama main o master');
+  });
+
+  it('should abort extract immediately with error notification when model is missing', async () => {
+    const commands: Record<string, any> = {};
+    const mockPi: ExtensionAPI = {
+      registerCommand(name, options) {
+        commands[name] = options;
+      },
+      sendMessage: vi.fn(),
+      on: vi.fn(),
+    };
+
+    registerExtension(mockPi);
+
+    const notifyMock = vi.fn();
+    const ctx = {
+      cwd: tempDir,
+      modelRegistry: null,
+      model: null,
+      ui: { notify: notifyMock },
+    };
+
+    await commands['gentle-playbook'].handler('extract', ctx);
+
+    expect(notifyMock).toHaveBeenCalledWith(
+      expect.stringContaining('Se requiere un modelo activo en Pi'),
+      'error'
+    );
+  });
+
+  it('should not touch disk when user cancels final confirmation in extract', async () => {
+    const commands: Record<string, any> = {};
+    const mockPi: ExtensionAPI = {
+      registerCommand(name, options) {
+        commands[name] = options;
+      },
+      sendMessage: vi.fn(),
+      on: vi.fn(),
+    };
+
+    registerExtension(mockPi);
+
+    const notifyMock = vi.fn();
+    const confirmMock = vi.fn().mockResolvedValue(false);
+    const modelCompleteMock = vi.fn().mockResolvedValue({
+      content: [
+        {
+          text: `=== REPORTE DE EVIDENCIA ===\n| E1 | Regla | INVARIANT | 1/1 | main.go:1 | ninguno |\n\n=== PLAYBOOK COMPACTO ===\n\`\`\`markdown\n---
+source: ${tempDir}
+lang: go
+project_type: cli
+stack: none
+extracted: 2026-03-30
+---\n## Invariants\n- [B1] Regla de prueba\n\`\`\``,
+        },
+      ],
+    });
+
+    const ctx = {
+      cwd: tempDir,
+      modelRegistry: { complete: modelCompleteMock },
+      model: { id: 'test-model' },
+      ui: {
+        notify: notifyMock,
+        confirm: confirmMock,
+        select: vi.fn(),
+      },
+    };
+
+    await commands['gentle-playbook'].handler('extract', ctx);
+
+    expect(confirmMock).toHaveBeenCalled();
+    expect(notifyMock).toHaveBeenCalledWith(
+      expect.stringContaining('Guardado cancelado por el usuario'),
+      'info'
+    );
+
+    const storage = new PlaybookStorage(tempDir);
+    const pb = await storage.getPlaybook('go');
+    expect(pb).toBeNull();
+  });
+
+  it('should parse --lang flag in extract command without treating it as an invalid path', async () => {
+    const commands: Record<string, any> = {};
+    const mockPi: ExtensionAPI = {
+      registerCommand(name, options) {
+        commands[name] = options;
+      },
+      sendMessage: vi.fn(),
+      on: vi.fn(),
+    };
+
+    registerExtension(mockPi);
+
+    const notifyMock = vi.fn();
+    const ctx = {
+      cwd: tempDir,
+      modelRegistry: null,
+      model: null,
+      ui: { notify: notifyMock },
+    };
+
+    await commands['gentle-playbook'].handler('extract --lang typescript', ctx);
+
+    expect(notifyMock).toHaveBeenCalledWith(
+      expect.stringContaining('Se requiere un modelo activo en Pi'),
+      'error'
+    );
+    expect(notifyMock).not.toHaveBeenCalledWith(
+      expect.stringContaining('no existe'),
+      'error'
+    );
   });
 });

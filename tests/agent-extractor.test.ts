@@ -66,8 +66,8 @@ func Handler(w http.ResponseWriter, r *http.Request) {
     const { playbook } = parseAgentOutput(sampleAgentOutput, 'go');
     const promptText = formatPlaybookForSystemPrompt(playbook);
 
-    expect(promptText).toContain('ACTIVE ARCHITECTURAL PLAYBOOK: Go');
-    expect(promptText).toContain('DELIBERATE PROHIBITIONS (NEVER DO)');
+    expect(promptText).toContain('ACTIVE ARCHITECTURAL CONVENTIONS: Go');
+    expect(promptText).toContain('DELIBERATE PROHIBITIONS (Architectural Anti-Patterns)');
     expect(promptText).toContain('No usar ORM');
   });
 });

@@ -237,4 +237,105 @@ describe('Diffing & Deduplication Engine', () => {
     expect(merged.neverRules?.[0].description).toBe('MI VERSION MANUAL NUNCA USAR GORM');
     expect(merged.snippets[0].code).toBe('// MI CODIGO MANUAL');
   });
+
+  it('should NOT declare conflict for rules with similar titles but different ids (#4 B)', () => {
+    const existing: Playbook = {
+      language: 'go',
+      version: 1,
+      updatedAt: '2026-01-01',
+      topology: { pattern: 'Clean', directories: [] },
+      invariants: [
+        {
+          id: 'rate-limit-middleware',
+          type: 'invariant',
+          title: 'Rate Limit Middleware',
+          surface: 'internal/http/',
+          description: 'Middleware de rate limit por IP',
+        },
+      ],
+      askRules: [],
+      snippets: [],
+    };
+
+    const incoming: Playbook = {
+      language: 'go',
+      version: 1,
+      updatedAt: '2026-03-30',
+      topology: { pattern: 'Clean', directories: [] },
+      invariants: [
+        {
+          id: 'global-rate-limit',
+          type: 'invariant',
+          title: 'Rate Limit', // Substring de 'Rate Limit Middleware'
+          surface: 'cmd/api/',
+          description: 'Token bucket global en entrada',
+        },
+      ],
+      askRules: [],
+      snippets: [],
+    };
+
+    const diff = computePlaybookDiff(incoming, existing);
+    expect(diff.stats.conflictRules).toBe(0);
+    expect(diff.stats.newRules).toBe(1);
+
+    const merged = mergePlaybooks(incoming, existing);
+    expect(merged.invariants).toHaveLength(2);
+    expect(merged.invariants.some((i) => i.id === 'rate-limit-middleware')).toBe(true);
+    expect(merged.invariants.some((i) => i.id === 'global-rate-limit')).toBe(true);
+  });
+
+  it('should apply custom_edit resolution to update conflict rule with user manual wording (#4 A)', () => {
+    const existing: Playbook = {
+      language: 'go',
+      version: 1,
+      updatedAt: '2026-01-01',
+      topology: { pattern: 'Hexagonal', directories: [] },
+      invariants: [
+        {
+          id: 'api-response',
+          type: 'invariant',
+          title: 'API Response Envelope',
+          surface: 'internal/http/',
+          description: 'Version original guardada',
+        },
+      ],
+      askRules: [],
+      snippets: [],
+    };
+
+    const incoming: Playbook = {
+      language: 'go',
+      version: 1,
+      updatedAt: '2026-03-30',
+      topology: { pattern: 'Hexagonal', directories: [] },
+      invariants: [
+        {
+          id: 'api-response',
+          type: 'invariant',
+          title: 'API Response Envelope',
+          surface: 'internal/http/',
+          description: 'Version propuesta por extract',
+        },
+      ],
+      askRules: [],
+      snippets: [],
+    };
+
+    const diff = computePlaybookDiff(incoming, existing);
+    expect(diff.stats.conflictRules).toBe(1);
+
+    const merged = mergePlaybooks(incoming, existing, {
+      'api-response': {
+        ruleId: 'api-response',
+        action: 'custom_edit',
+        customDescription: 'Mi redaccion hibrida personalizada acordada con el usuario',
+      },
+    });
+
+    expect(merged.invariants).toHaveLength(1);
+    expect(merged.invariants[0].description).toBe(
+      'Mi redaccion hibrida personalizada acordada con el usuario'
+    );
+  });
 });

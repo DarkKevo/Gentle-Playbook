@@ -54,8 +54,8 @@ Or `/gentle-playbook add [lang|agents]`.
 - Shows a confirmation preview and saves it to the playbook.
 
 ### Extracting a New Playbook from a Reference Repo
-Run the extraction command:
+Run the extraction command in Pi:
 ```bash
-gentle-playbook extract <path-to-repo> [--lang <lang>]
+/gentle-playbook extract [path-to-repo] [--lang <lang>]
 ```
-This runs CodeGraph to analyze topology, detect invariants, extract canonical snippets, and compute a semantic diff against any existing playbook for that language.
+This runs the Essence Explorer Agent backed by CodeGraph (or native file exploration fallback) to analyze topology, count empirical evidence (file:line), detect invariants, ask checkpoints and prohibitions, and perform AI-driven semantic diffing with 1-to-1 interactive conflict arbitration in the TUI before writing to disk. Running `gentle-playbook extract` from the terminal detects project structure and guides you to run the interactive extraction inside Pi.
