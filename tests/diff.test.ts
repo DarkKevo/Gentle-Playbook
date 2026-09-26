@@ -150,4 +150,91 @@ describe('Diffing & Deduplication Engine', () => {
     // Combined directories
     expect(merged.topology.directories).toContain('internal/adapters/storage/');
   });
+
+  it('should copy neverRules when creating a new playbook from scratch (!existing)', () => {
+    const freshIncoming: Playbook = {
+      language: 'python',
+      version: 1,
+      updatedAt: '2026-03-30',
+      topology: { pattern: 'FastAPI', directories: [] },
+      invariants: [],
+      askRules: [],
+      neverRules: [
+        {
+          id: 'no-globals',
+          type: 'never',
+          title: 'Sin variables globales',
+          surface: 'app/',
+          description: 'No mutar estado global en endpoints',
+        },
+      ],
+      snippets: [],
+    };
+
+    const merged = mergePlaybooks(freshIncoming, null);
+    expect(merged.neverRules).toBeDefined();
+    expect(merged.neverRules).toHaveLength(1);
+    expect(merged.neverRules?.[0].id).toBe('no-globals');
+  });
+
+  it('should preserve existing snippets and neverRules on conflict by default (Safety by Default)', () => {
+    const current: Playbook = {
+      language: 'go',
+      version: 1,
+      updatedAt: '2026-01-01',
+      topology: { pattern: 'Hexagonal', directories: [] },
+      invariants: [],
+      askRules: [],
+      neverRules: [
+        {
+          id: 'no-heavy-orm',
+          type: 'never',
+          title: 'Curado a mano',
+          surface: 'general',
+          description: 'MI VERSION MANUAL NUNCA USAR GORM',
+        },
+      ],
+      snippets: [
+        {
+          id: 'response-helper',
+          title: 'Mi Snippet Manual',
+          language: 'go',
+          code: '// MI CODIGO MANUAL',
+        },
+      ],
+    };
+
+    const incomingConflict: Playbook = {
+      language: 'go',
+      version: 1,
+      updatedAt: '2026-03-30',
+      topology: { pattern: 'Hexagonal', directories: [] },
+      invariants: [],
+      askRules: [],
+      neverRules: [
+        {
+          id: 'no-heavy-orm',
+          type: 'never',
+          title: 'Generico',
+          surface: 'general',
+          description: 'No usar ORM generico',
+        },
+      ],
+      snippets: [
+        {
+          id: 'response-helper',
+          title: 'Snippet Generico',
+          language: 'go',
+          code: '// CODIGO GENERICO',
+        },
+      ],
+    };
+
+    // Merge sin resoluciones explicitas (safety by default)
+    const merged = mergePlaybooks(incomingConflict, current);
+
+    // Deben preservarse las versiones manuales existentes
+    expect(merged.neverRules?.[0].description).toBe('MI VERSION MANUAL NUNCA USAR GORM');
+    expect(merged.snippets[0].code).toBe('// MI CODIGO MANUAL');
+  });
 });

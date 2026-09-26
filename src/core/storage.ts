@@ -104,4 +104,52 @@ export class PlaybookStorage {
       throw err;
     }
   }
+
+  async deleteRule(language: string, ruleId: string): Promise<{ deleted: boolean; ruleType?: string }> {
+    const playbook = await this.getPlaybook(language);
+    if (!playbook) {
+      return { deleted: false };
+    }
+
+    const normId = ruleId.trim().toLowerCase();
+
+    // 1. Check in Invariants
+    const invIdx = playbook.invariants.findIndex((i) => i.id.toLowerCase() === normId);
+    if (invIdx >= 0) {
+      playbook.invariants.splice(invIdx, 1);
+      await this.savePlaybook(playbook);
+      return { deleted: true, ruleType: 'invariant' };
+    }
+
+    // 2. Check in Ask Rules
+    const askIdx = playbook.askRules.findIndex((a) => a.id.toLowerCase() === normId);
+    if (askIdx >= 0) {
+      playbook.askRules.splice(askIdx, 1);
+      await this.savePlaybook(playbook);
+      return { deleted: true, ruleType: 'ask' };
+    }
+
+    // 3. Check in Never Rules
+    if (playbook.neverRules) {
+      const neverIdx = playbook.neverRules.findIndex((n) => n.id.toLowerCase() === normId);
+      if (neverIdx >= 0) {
+        playbook.neverRules.splice(neverIdx, 1);
+        if (playbook.neverRules.length === 0) {
+          delete playbook.neverRules;
+        }
+        await this.savePlaybook(playbook);
+        return { deleted: true, ruleType: 'never' };
+      }
+    }
+
+    // 4. Check in Snippets
+    const snipIdx = playbook.snippets.findIndex((s) => s.id.toLowerCase() === normId);
+    if (snipIdx >= 0) {
+      playbook.snippets.splice(snipIdx, 1);
+      await this.savePlaybook(playbook);
+      return { deleted: true, ruleType: 'snippet' };
+    }
+
+    return { deleted: false };
+  }
 }

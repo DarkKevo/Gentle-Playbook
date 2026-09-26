@@ -93,4 +93,49 @@ describe('Gentle Playbook Extension Hooks', () => {
     expect(injected).toContain('tools:write,tools:edit');
     expect(injected).toContain('¿Autorizas este comando destructivo?');
   });
+
+  it('should inject agents-preferences with neverRules into system prompt', async () => {
+    const storage = new PlaybookStorage(tempDir);
+    const agentPb: Playbook = {
+      language: AGENTS_PREFERENCES_ID,
+      version: 1,
+      updatedAt: '2026-03-30',
+      topology: { pattern: 'Agent Runtime', directories: [] },
+      invariants: [],
+      askRules: [],
+      neverRules: [
+        {
+          id: 'no-push-to-main',
+          type: 'never',
+          title: 'Prohibido push a main',
+          surface: 'git:push',
+          description: 'No hacer git push directo a la rama main o master.',
+        },
+      ],
+      snippets: [],
+    };
+    await storage.saveAgentPreferences(agentPb);
+
+    const listeners: Record<string, Function> = {};
+    const mockPi: ExtensionAPI = {
+      registerCommand: vi.fn(),
+      sendMessage: vi.fn(),
+      on(event, handler) {
+        listeners[event] = handler;
+      },
+    };
+
+    registerExtension(mockPi);
+
+    const event: any = { systemPromptOptions: { sections: {} } };
+    const ctx = { cwd: tempDir };
+
+    await listeners['before_agent_start'](event, ctx);
+
+    const injected = event.systemPromptOptions.sections['gentle_playbook'];
+    expect(injected).toBeDefined();
+    expect(injected).toContain('MANDATORY PROHIBITIONS (NEVER DO)');
+    expect(injected).toContain('no-push-to-main');
+    expect(injected).toContain('No hacer git push directo a la rama main o master');
+  });
 });

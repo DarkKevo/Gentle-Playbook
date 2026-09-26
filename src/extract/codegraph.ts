@@ -40,7 +40,7 @@ export class CodeGraphWrapper {
   private binaryPath: string;
 
   constructor(customBinary?: string) {
-    this.binaryPath = customBinary || process.env.CODEGRAPH_BIN || '/home/darkkevo/.local/bin/codegraph';
+    this.binaryPath = customBinary || process.env.CODEGRAPH_BIN || 'codegraph';
   }
 
   async isAvailable(): Promise<boolean> {

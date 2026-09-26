@@ -42,8 +42,8 @@ export function isAgentPreferences(input: string): boolean {
   );
 }
 
-export function resolveLanguage(input: string): string {
-  if (!input) return 'generic';
+export function resolveLanguageStrict(input: string): string | null {
+  if (!input) return null;
   const trimmed = input.trim().toLowerCase();
 
   if (isAgentPreferences(trimmed)) {
@@ -58,15 +58,27 @@ export function resolveLanguage(input: string): string {
   const directName = SUPPORTED_LANGUAGES.find((l) => l.name.toLowerCase() === trimmed);
   if (directName) return directName.id;
 
-  // 3. Match with aliases
+  // 3. Match with exact aliases
   const byAlias = SUPPORTED_LANGUAGES.find((l) => l.aliases.includes(trimmed));
   if (byAlias) return byAlias.id;
 
-  // 4. Substring / partial matching
-  const partial = SUPPORTED_LANGUAGES.find(
-    (l) => l.name.toLowerCase().includes(trimmed) || trimmed.includes(l.id)
-  );
-  if (partial) return partial.id;
+  return null;
+}
+
+export function resolveLanguage(input: string): string {
+  if (!input) return 'generic';
+  const trimmed = input.trim().toLowerCase();
+
+  const strict = resolveLanguageStrict(trimmed);
+  if (strict) return strict;
+
+  // Substring matching ONLY if input is at least 3 characters long to avoid single-letter collisions
+  if (trimmed.length >= 3) {
+    const partial = SUPPORTED_LANGUAGES.find(
+      (l) => l.name.toLowerCase().includes(trimmed) || trimmed.includes(l.id)
+    );
+    if (partial) return partial.id;
+  }
 
   // Fallback to sanitized input
   return trimmed.replace(/[^a-z0-9_-]/g, '');

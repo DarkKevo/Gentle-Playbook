@@ -1,6 +1,7 @@
 import * as path from 'node:path';
 import { PlaybookStorage } from './core/storage.js';
-import { extractPlaybook, detectProjectLanguage } from './extract/extractor.js';
+import { extractPlaybook, detectProjectLanguage, detectProjectLanguages } from './extract/extractor.js';
+import { runAgentExtraction } from './extract/agent-extractor.js';
 import { computePlaybookDiff, mergePlaybooks } from './core/diff.js';
 import { formatPlaybookForDisplay, formatPlaybookForSystemPrompt, formatAgentPreferencesForSystemPrompt } from './core/parser.js';
 import { InvariantRule, AskRule, RuleType, Playbook, AGENTS_PREFERENCES_ID } from './core/schema.js';
@@ -307,19 +308,69 @@ export default function (pi: ExtensionAPI) {
         }
 
         const resolvedPath = path.resolve(ctx.cwd || process.cwd(), targetPath);
-        ctx.ui?.notify(`Analyzing essence from ${resolvedPath}...`, 'info');
+        ctx.ui?.notify(`Iniciando Agente Explorador de Esencia sobre ${resolvedPath}...`, 'info');
 
         try {
-          const detectedLang = await detectProjectLanguage(resolvedPath);
-          const draft = await extractPlaybook(resolvedPath, { language: detectedLang });
-          const existing = await storage.getPlaybook(detectedLang);
+          const langResult = await detectProjectLanguages(resolvedPath);
+          const detectedLang = langResult.primary;
 
+          if (langResult.isMonorepo) {
+            const countsDesc = langResult.detected
+              .map((l) => `${l} (${langResult.counts[l] || 0} archivos)`)
+              .join(', ');
+            ctx.ui?.notify(`Múltiples lenguajes detectados: ${countsDesc}. Predominante: ${detectedLang}`, 'info');
+          }
+
+          let draft: Playbook;
+          let evidenceReport = '';
+
+          if (ctx.modelRegistry && ctx.model) {
+            ctx.ui?.notify('Explorando decisiones arquitectónicas y recolectando evidencia contada...', 'info');
+            const result = await runAgentExtraction(resolvedPath, {
+              language: detectedLang,
+              completePrompt: async (prompt: string) => {
+                const completion = await ctx.modelRegistry.complete(ctx.model, {
+                  messages: [{ role: 'user', content: prompt }],
+                });
+                return completion?.content?.map((c: any) => c.text || '').join('') || '';
+              },
+            });
+            draft = result.playbook;
+            evidenceReport = result.evidenceReport;
+          } else {
+            // Fallback sintáctico clásico si no hay modelRegistry disponible
+            draft = await extractPlaybook(resolvedPath, { language: detectedLang });
+          }
+
+          const existing = await storage.getPlaybook(detectedLang);
           const diff = computePlaybookDiff(draft, existing);
+
+          // Si hay reporte de evidencia, mostrárselo al usuario
+          if (evidenceReport) {
+            pi.sendMessage({
+              customType: 'gentle-playbook-evidence',
+              content: `### 📊 Reporte de Evidencia de Extracción\n\n${evidenceReport}`,
+              display: true,
+            });
+          }
+
+          // Confirmación interactiva si la UI lo permite
+          if (ctx.ui?.confirm) {
+            const confirmed = await ctx.ui.confirm(
+              'Aprobar extracción de esencia',
+              `¿Deseas guardar estas ${diff.stats.newRules} nuevas reglas en el playbook de ${detectedLang}?`
+            );
+            if (!confirmed) {
+              ctx.ui?.notify('Extracción cancelada por el usuario. No se guardaron cambios.', 'info');
+              return;
+            }
+          }
+
           const merged = mergePlaybooks(draft, existing);
           await storage.savePlaybook(merged);
 
           ctx.ui?.notify(
-            `Playbook for ${detectedLang} updated: ${diff.stats.newRules} new, ${diff.stats.identicalRules} identical, ${diff.stats.conflictRules} conflicts resolved.`,
+            `Playbook para ${detectedLang} actualizado: ${diff.stats.newRules} nuevas, ${diff.stats.identicalRules} idénticas, ${diff.stats.conflictRules} conflictos resueltos.`,
             'info'
           );
 
@@ -329,7 +380,7 @@ export default function (pi: ExtensionAPI) {
             display: true,
           });
         } catch (err: any) {
-          ctx.ui?.notify(`Extraction failed: ${err.message}`, 'error');
+          ctx.ui?.notify(`Fallo en la extracción: ${err.message}`, 'error');
         }
       }
     },
@@ -372,7 +423,12 @@ export default function (pi: ExtensionAPI) {
 
     // 1. Cargar SIEMPRE Agents Preferences si existen
     const agentPrefs = await storage.getAgentPreferences();
-    if (agentPrefs && (agentPrefs.invariants.length > 0 || agentPrefs.askRules.length > 0)) {
+    if (
+      agentPrefs &&
+      (agentPrefs.invariants.length > 0 ||
+        agentPrefs.askRules.length > 0 ||
+        (agentPrefs.neverRules && agentPrefs.neverRules.length > 0))
+    ) {
       promptParts.push(formatAgentPreferencesForSystemPrompt(agentPrefs));
     }
 

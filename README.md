@@ -144,18 +144,29 @@ A través del hook `before_agent_start`, las preferencias de agente se cargan **
 ---
 
 ### 4. Extracción de Esencia desde un Repositorio: `extract`
-Si ya tenés un proyecto de referencia donde programaste con tu estilo (por ejemplo un backend en Go):
+Si ya tenés un proyecto de referencia donde programaste con tu estilo (por ejemplo un backend en Go, un servicio en TypeScript, Rust o Python):
 
 ```bash
-gentle-playbook extract /ruta/a/mi-backend-go
+# Dentro de Pi (Recomendado: Agente Explorador con Evidencia y Confirmación)
+/gentle-playbook extract /ruta/a/mi-backend
+
+# O desde la terminal (CLI)
+gentle-playbook extract /ruta/a/mi-backend [--lang go]
 ```
 
-**¿Cómo funciona por debajo?**
-1. **CodeGraph:** Inicializa o consulta el índice `.codegraph` del repositorio para mapear ASTs, símbolos y call-graphs sin quemar tokens leyendo archivos completos.
-2. **Análisis de Topología:** Identifica si el proyecto es Hexagonal Modular, Clean Architecture, etc., y extrae la estructura de carpetas canónicas.
-3. **Detección de Invariantes y Snippets:** Radiografía middlewares globales, validadores custom y envelopes de respuesta universal, capturando el código fuente real como snippet canónico.
-4. **Deducción de Triggers con Call-Graph:** Analiza las referencias de llamadas (`callers`) para inferir en qué rutas se usan ciertos módulos y generar los Triggers y Anti-Triggers automáticamente.
-5. **Diff Semántico & Deduplicación:** Compara lo detectado con tu playbook actual. Las reglas idénticas se descartan, los conflictos se señalan y las nuevas reglas se incorporan limpiamente.
+#### 🧠 ¿Cómo funciona la extracción inteligente con Agente en Pi?
+A diferencia de herramientas que buscan palabras fijas o aplican linters genéricos, `/gentle-playbook extract` despliega un **Agente Explorador de Esencia** que aplica ingeniería inversa bajo una metodología rigurosa de 4 fases:
+
+1. **Reconocimiento y Detección de Monorepos:** Identifica el tipo de proyecto (`api-http`, `cli`, `frontend`, `worker/pipeline`, etc.). Si coexisten múltiples manifiestos (`go.mod`, `package.json`), pondera automáticamente por el conteo real de archivos de código para determinar el lenguaje predominante (respetando `--lang` si lo especificás).
+2. **La Regla de Oro: "Elección vs Imposición":** El agente evalúa si existía una alternativa razonable en ese stack y qué eligió el autor consistentemente. Descarta lo obvio impuesto por el lenguaje/framework y captura la verdadera huella digital arquitectónica.
+3. **Verificación Cuantitativa (Evidencia Contada):** No generaliza por intuición. Cuenta casos reales (`cumple / total`) y busca activamente contraejemplos:
+   - **≥ 90% y ≥ 5 casos:** Se registra como **Normativa Invariante (`INVARIANT`)**.
+   - **60-89% o condicional a contexto:** Se registra como **Punto de Control / Receta (`ASK_RULE`)**.
+   - **< 60% o < 3 casos:** Se descarta como ruido.
+4. **Ausencias Deliberadas (`Nunca`):** Identifica lo que el proyecto evita sistemáticamente cuando era una opción disponible (ej: "No usar ORM; queries en SQL explícito", "No usar globals", "Sin `any`").
+5. **Reporte de Evidencia & Confirmación Previa:** Antes de tocar el disco, Pi te muestra una tabla de evidencia con `archivo:línea` de cada regla detectada y te pide confirmación explícita (`Yes / No`) para guardar o fusionar los cambios con tu playbook existente.
+
+*(Nota: En modo CLI sin LLM activo, `gentle-playbook extract` utiliza un motor estático de topología y patrones de referencia para Go).*
 
 ---
 
@@ -171,11 +182,19 @@ gentle-playbook show go
 # Ver el playbook completo incluyendo los snippets de código fuente
 gentle-playbook show go --full
 
+# Agregar una regla individual (invariante, ask o nunca)
+gentle-playbook add go --type invariant --title "No Null Bytes" --surface "internal/http/" --description "Rechazar caracteres nulos"
+gentle-playbook add go --type ask --title "Rate Limit" --trigger "Rutas públicas" --prompt "¿Aplicar rate limiter?"
+gentle-playbook add go --type never --description "No usar ORMs pesados; SQL explícito con pgx"
+
 # Extraer y actualizar un playbook desde un repositorio
 gentle-playbook extract /ruta/al/repo [--lang go]
 
-# Eliminar un playbook
-gentle-playbook delete python
+# Borrado quirúrgico de una regla específica por su ID
+gentle-playbook delete go --rule dto-notblank-validation
+
+# Eliminar un playbook completo (con confirmación de seguridad interactiva o --yes)
+gentle-playbook delete python [--yes]
 ```
 
 ---
@@ -235,6 +254,15 @@ Ejemplo de `~/.config/gentle-playbook/languages/go.md`:
 // [Código fuente canónico real]
 ```
 ```
+
+---
+
+## ⚙️ Variables de Entorno
+
+| Variable | Descripción | Valor por Defecto |
+|---|---|---|
+| `CODEGRAPH_BIN` | Ruta al binario de CodeGraph para indexación y consultas AST | `codegraph` (resuelto vía `$PATH`) |
+| `GENTLE_PLAYBOOK_DIR` | Directorio de almacenamiento de playbooks y preferencias | `~/.config/gentle-playbook/languages` |
 
 ---
 

@@ -1,4 +1,4 @@
-export type RuleType = 'invariant' | 'ask';
+export type RuleType = 'invariant' | 'ask' | 'never';
 
 export const AGENTS_PREFERENCES_ID = 'agents-preferences';
 
@@ -22,6 +22,11 @@ export interface AskRule extends BaseRule {
   recipeSnippetId?: string;
 }
 
+export interface NeverRule extends BaseRule {
+  type: 'never';
+  reason?: string;
+}
+
 export interface Snippet {
   id: string;
   title: string;
@@ -40,15 +45,19 @@ export interface Playbook {
   version: number;
   updatedAt: string;
   topology: Topology;
+  source?: string;
+  projectType?: string;
+  stack?: string[];
   invariants: InvariantRule[];
   askRules: AskRule[];
+  neverRules?: NeverRule[];
   snippets: Snippet[];
 }
 
 export interface RuleDiff {
   type: 'new' | 'identical' | 'conflict';
   category: RuleType;
-  incoming: InvariantRule | AskRule;
-  existing?: InvariantRule | AskRule;
+  incoming: InvariantRule | AskRule | NeverRule;
+  existing?: InvariantRule | AskRule | NeverRule;
   conflictReason?: string;
 }

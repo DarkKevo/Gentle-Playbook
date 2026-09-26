@@ -104,7 +104,7 @@ export class CodePatternAnalyzer {
 
     if (validatorNode) {
       const relDir = path.dirname(validatorNode.filePath) + '/';
-      
+
       // Check if custom_validators.go exists in that directory
       let customValPath = path.join(path.dirname(validatorNode.filePath), 'custom_validators.go');
       let targetFile = validatorNode.filePath;
@@ -185,10 +185,6 @@ export class CodePatternAnalyzer {
     const rbacNode = results.find((r) => r.node.name.includes('RequireRoles') || r.node.name.includes('RequireAdminRoles'))?.node;
 
     if (rbacNode) {
-      const callers = await this.cg.callers(projectPath, rbacNode.name);
-      const callFiles = callers.map((c) => c.filePath || '').filter(Boolean);
-      const hasSpecificCallers = callFiles.length > 0;
-
       const relDir = path.dirname(rbacNode.filePath) + '/';
       askRules.push({
         id: 'rbac-authorization',

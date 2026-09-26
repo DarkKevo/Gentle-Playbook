@@ -3,18 +3,38 @@ import {
   Topology,
   InvariantRule,
   AskRule,
+  NeverRule,
   Snippet,
   AGENTS_PREFERENCES_ID,
 } from './schema.js';
 
 export function parsePlaybook(markdown: string): Playbook {
-  const lines = markdown.split(/\r?\n/);
-
   let version = 1;
   let language = '';
   let updatedAt = new Date().toISOString().split('T')[0];
+  let source: string | undefined;
+  let projectType: string | undefined;
+  let stack: string[] | undefined;
 
-  // 1. Header parsing: <!-- gentle-playbook:v1 lang=go updated=2025-02-18 -->
+  // 1. Frontmatter parsing (YAML-like) or HTML comment
+  const frontmatterMatch = markdown.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  if (frontmatterMatch) {
+    const fmLines = frontmatterMatch[1].split(/\r?\n/);
+    for (const line of fmLines) {
+      const [key, ...vals] = line.split(':');
+      if (!key || vals.length === 0) continue;
+      const k = key.trim().toLowerCase();
+      const v = vals.join(':').trim();
+      if (k === 'source') source = v;
+      if (k === 'lang') language = v.toLowerCase();
+      if (k === 'project_type' || k === 'projecttype') projectType = v;
+      if (k === 'extracted' || k === 'updated') updatedAt = v;
+      if (k === 'stack') {
+        stack = v.split(/[,;]/).map((s) => s.trim()).filter(Boolean);
+      }
+    }
+  }
+
   const headerMatch = markdown.match(/<!--\s*gentle-playbook:v(\d+)\s+lang=([^\s]+)\s+updated=([^\s]+)\s*-->/);
   if (headerMatch) {
     version = parseInt(headerMatch[1], 10);
@@ -39,6 +59,7 @@ export function parsePlaybook(markdown: string): Playbook {
 
   const invariants: InvariantRule[] = [];
   const askRules: AskRule[] = [];
+  const neverRules: NeverRule[] = [];
   const snippets: Snippet[] = [];
 
   // Split into H2 sections
@@ -69,13 +90,13 @@ export function parsePlaybook(markdown: string): Playbook {
   for (const section of sections) {
     const secTitle = section.title.toLowerCase();
 
-    if (secTitle.startsWith('topology')) {
+    if (secTitle.startsWith('topology') || secTitle.startsWith('estructura')) {
       // e.g. "Topology: Hexagonal (Ports & Adapters)"
-      const patternMatch = section.title.match(/topology:\s*(.+)/i);
+      const patternMatch = section.title.match(/(?:topology|estructura):\s*(.+)/i);
       if (patternMatch) {
         topology.pattern = patternMatch[1].trim();
       }
-      const dirMatches = section.content.matchAll(/^\s*-\s+`([^`]+)`/gm);
+      const dirMatches = section.content.matchAll(/^\s*-\s+`?([^`\r\n]+)`?/gm);
       for (const m of dirMatches) {
         topology.directories.push(m[1].trim());
       }
@@ -86,9 +107,9 @@ export function parsePlaybook(markdown: string): Playbook {
           topology.directories.push(m[1].trim());
         }
       }
-    } else if (secTitle.startsWith('invariant')) {
+    } else if (secTitle.startsWith('invariant') || secTitle.startsWith('normativa')) {
       // Parse Invariant rules
-      // ### [INVARIANT:id] Title
+      // 1. ### [INVARIANT:id] Title
       const ruleBlocks = section.content.split(/(?=^###\s+\[INVARIANT:)/m);
       for (const block of ruleBlocks) {
         const header = block.match(/^###\s+\[INVARIANT:([^\]]+)\]\s+([^\r\n]+)/m);
@@ -108,9 +129,24 @@ export function parsePlaybook(markdown: string): Playbook {
           description: ruleMatch ? ruleMatch[1].replace(/\r?\n\s+/g, ' ').trim() : '',
         });
       }
+
+      // 2. Compact bullets: - [B3] Rule text
+      const bulletLines = section.content.matchAll(/^\s*-\s+\[([a-zA-Z0-9_-]+)\]\s+([^\r\n]+)/gm);
+      for (const b of bulletLines) {
+        const tag = b[1].trim();
+        const text = b[2].trim();
+        if (invariants.some((i) => i.id === tag.toLowerCase())) continue;
+        invariants.push({
+          id: tag.toLowerCase(),
+          type: 'invariant',
+          title: `[${tag}] ${text}`,
+          surface: tag.startsWith('B') ? 'core/style' : tag.startsWith('H') ? 'transport/http' : 'general',
+          description: text,
+        });
+      }
     } else if (secTitle.startsWith('ask')) {
       // Parse Ask rules
-      // ### [ASK:id] Title
+      // 1. ### [ASK:id] Title
       const ruleBlocks = section.content.split(/(?=^###\s+\[ASK:)/m);
       for (const block of ruleBlocks) {
         const header = block.match(/^###\s+\[ASK:([^\]]+)\]\s+([^\r\n]+)/m);
@@ -140,15 +176,52 @@ export function parsePlaybook(markdown: string): Playbook {
           description: descMatch ? descMatch[1].trim() : (triggerMatch ? triggerMatch[1].trim() : ''),
         });
       }
+
+      // 2. Compact bullets: - [H1] SI endpoint es público... -> prompt
+      const bulletLines = section.content.matchAll(/^\s*-\s+\[([a-zA-Z0-9_-]+)\]\s+([^\r\n]+)/gm);
+      for (const b of bulletLines) {
+        const tag = b[1].trim();
+        const text = b[2].trim();
+        if (askRules.some((a) => a.id === tag.toLowerCase())) continue;
+        const arrowParts = text.split(/→|->/);
+        const cond = arrowParts[0]?.trim() || text;
+        const question = arrowParts[1]?.trim() || `¿Desea aplicar ${cond}?`;
+
+        askRules.push({
+          id: tag.toLowerCase(),
+          type: 'ask',
+          title: `[${tag}] ${cond}`,
+          surface: tag.startsWith('H') ? 'transport/http' : 'general',
+          trigger: cond,
+          antiTrigger: 'En llamadas internas o cuando no aplique la condición',
+          prompt: question,
+          defaultAction: 'Continuar sin aplicar patrón condicional',
+          description: text,
+        });
+      }
+    } else if (secTitle.startsWith('nunca') || secTitle.startsWith('never')) {
+      const bulletLines = section.content.matchAll(/^\s*-\s+(?:\[([a-zA-Z0-9_-]+)\]\s+)?([^\r\n]+)/gm);
+      let idx = 1;
+      for (const b of bulletLines) {
+        const tag = b[1] ? b[1].trim() : `never-${idx++}`;
+        const text = b[2].trim();
+        neverRules.push({
+          id: tag.toLowerCase(),
+          type: 'never',
+          title: `Prohibición: ${text}`,
+          surface: 'general',
+          description: text,
+        });
+      }
     } else if (secTitle.startsWith('canonical snippet') || secTitle.startsWith('snippet')) {
       // Parse Snippets
-      // ### [SNIPPET:id] Title
-      const snippetBlocks = section.content.split(/(?=^###\s+\[SNIPPET:)/m);
+      // ### [SNIPPET:id] Title or ### Title
+      const snippetBlocks = section.content.split(/(?=^###\s+)/m);
       for (const block of snippetBlocks) {
-        const header = block.match(/^###\s+\[SNIPPET:([^\]]+)\]\s+([^\r\n]+)/m);
+        const header = block.match(/^###\s+(?:\[SNIPPET:([^\]]+)\]\s+)?([^\r\n]+)/m);
         if (!header) continue;
 
-        const id = header[1].trim();
+        const id = header[1] ? header[1].trim() : header[2].trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-');
         const title = header[2].trim();
 
         const codeBlockMatch = block.match(/```([a-zA-Z0-9_-]*)\r?\n([\s\S]*?)\r?\n```/);
@@ -169,8 +242,12 @@ export function parsePlaybook(markdown: string): Playbook {
     version,
     updatedAt,
     topology,
+    source,
+    projectType,
+    stack,
     invariants,
     askRules,
+    neverRules: neverRules.length > 0 ? neverRules : undefined,
     snippets,
   };
 }
@@ -222,7 +299,17 @@ export function serializePlaybook(playbook: Playbook): string {
     parts.push('');
   }
 
-  // 5. Canonical Snippets
+  // 5. Never Rules (Ausencias Deliberadas)
+  if (playbook.neverRules && playbook.neverRules.length > 0) {
+    parts.push('## Nunca');
+    parts.push('');
+    for (const never of playbook.neverRules) {
+      parts.push(`- [${never.id.toUpperCase()}] ${never.description}`);
+    }
+    parts.push('');
+  }
+
+  // 6. Canonical Snippets
   if (playbook.snippets.length > 0) {
     parts.push('## Canonical Snippets');
     parts.push('');
@@ -302,7 +389,17 @@ export function formatPlaybookForDisplay(
     parts.push('');
   }
 
-  // 3. Canonical Snippets (solo si se solicita explícitamente)
+  // 3. Never Rules (Ausencias Deliberadas)
+  if (playbook.neverRules && playbook.neverRules.length > 0) {
+    parts.push('## 🚫 Ausencias Deliberadas (Nunca)');
+    parts.push('');
+    for (const never of playbook.neverRules) {
+      parts.push(`- **[NUNCA:${never.id}]** ${never.description}`);
+    }
+    parts.push('');
+  }
+
+  // 4. Canonical Snippets (solo si se solicita explícitamente)
   if (options.includeSnippets && playbook.snippets.length > 0) {
     parts.push('## 📦 Snippets Canónicos');
     parts.push('');
@@ -332,6 +429,15 @@ export function formatAgentPreferencesForSystemPrompt(playbook: Playbook): strin
     parts.push('You must strictly obey these limits. Do not bypass or proceed without adhering to them:');
     for (const inv of playbook.invariants) {
       parts.push(`- [${inv.id}] ${inv.title} (Surface/Tools: ${inv.surface}): ${inv.description}`);
+    }
+    parts.push('');
+  }
+
+  if (playbook.neverRules && playbook.neverRules.length > 0) {
+    parts.push('## MANDATORY PROHIBITIONS (NEVER DO)');
+    parts.push('You are strictly forbidden from performing any of the following actions:');
+    for (const never of playbook.neverRules) {
+      parts.push(`- [${never.id}] ${never.description}`);
     }
     parts.push('');
   }
@@ -384,6 +490,15 @@ export function formatPlaybookForSystemPrompt(playbook: Playbook): string {
       parts.push(`  Anti-Trigger: ${ask.antiTrigger}`);
       parts.push(`  Prompt to User: "${ask.prompt}"`);
       parts.push(`  Default: ${ask.defaultAction}`);
+    }
+    parts.push('');
+  }
+
+  if (playbook.neverRules && playbook.neverRules.length > 0) {
+    parts.push('## DELIBERATE PROHIBITIONS (NEVER DO)');
+    parts.push('These are strictly prohibited architecture anti-patterns or practices in this codebase:');
+    for (const never of playbook.neverRules) {
+      parts.push(`- [${never.id}] ${never.description}`);
     }
     parts.push('');
   }

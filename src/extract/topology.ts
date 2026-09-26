@@ -39,6 +39,8 @@ export async function detectTopology(projectPath: string): Promise<Topology> {
   const hasAdaptersDrivens = dirs.some((d) => d.includes('adapters/drivens') || d.includes('adapters/driven'));
   const hasPorts = dirs.some((d) => d.includes('ports'));
   const hasDomain = dirs.some((d) => d.includes('domain') || d.includes('entities'));
+  const hasInfrastructure = dirs.some((d) => d.includes('infrastructure'));
+  const hasApplication = dirs.some((d) => d.includes('application'));
   const hasInternal = dirs.some((d) => d.startsWith('internal/'));
   const hasCmd = dirs.some((d) => d.startsWith('cmd/'));
   const hasUseCases = dirs.some((d) => d.includes('usecase') || d.includes('usecases'));
@@ -67,6 +69,14 @@ export async function detectTopology(projectPath: string): Promise<Topology> {
     canonicalDirs.push('internal/core/ports/');
     canonicalDirs.push('internal/adapters/handlers/');
     canonicalDirs.push('internal/adapters/storage/');
+  } else if (hasDomain && (hasInfrastructure || hasApplication || hasUseCases)) {
+    pattern = 'Clean Architecture';
+    const dom = dirs.find((d) => d.includes('domain'));
+    const app = dirs.find((d) => d.includes('application') || d.includes('usecase'));
+    const infra = dirs.find((d) => d.includes('infrastructure') || d.includes('adapters'));
+    if (dom) canonicalDirs.push(dom);
+    if (app) canonicalDirs.push(app);
+    if (infra) canonicalDirs.push(infra);
   } else if (hasUseCases) {
     pattern = 'Clean Architecture';
     canonicalDirs.push('domain/', 'usecases/', 'delivery/', 'repository/');

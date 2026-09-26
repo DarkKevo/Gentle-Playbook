@@ -66,6 +66,7 @@ echo "✓ Linked CLI binary to ${CLI_BIN}"
 if command -v pi >/dev/null 2>&1; then
   echo "🔌 Registering package in Pi..."
   # Clean up duplicate registrations from alternate locations to prevent skill collision
+  echo "  (Checking ~/.pi/agent/settings.json to prevent duplicate registrations)"
   node -e '
     const fs = require("fs");
     const p = `${process.env.HOME}/.pi/agent/settings.json`;
@@ -73,11 +74,15 @@ if command -v pi >/dev/null 2>&1; then
     try {
       const s = JSON.parse(fs.readFileSync(p, "utf8"));
       if (Array.isArray(s.packages)) {
+        const originalCount = s.packages.length;
         s.packages = s.packages.filter(pkg => {
           const str = typeof pkg === "string" ? pkg : pkg.source;
           return !str.toLowerCase().includes("gentle-playbook");
         });
-        fs.writeFileSync(p, JSON.stringify(s, null, 2), "utf8");
+        if (s.packages.length !== originalCount) {
+          console.log("  ✓ Cleaned up previous gentle-playbook package entries in settings.json");
+          fs.writeFileSync(p, JSON.stringify(s, null, 2), "utf8");
+        }
       }
     } catch {}
   ' 2>/dev/null || true

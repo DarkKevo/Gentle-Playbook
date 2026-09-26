@@ -1,25 +1,28 @@
 import { describe, it, expect } from 'vitest';
 import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { detectProjectLanguage, extractPlaybook } from '../src/extract/extractor.js';
 import { detectTopology } from '../src/extract/topology.js';
 import { CodeGraphWrapper } from '../src/extract/codegraph.js';
 
-describe('Extraction Engine', () => {
-  const inmortalPath = '/home/darkkevo/Proyectos/inmortal_gaming_backend';
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const fixturePath = path.join(__dirname, 'fixtures', 'go-hexagonal');
 
-  it('should detect Go language from repository root', async () => {
-    const lang = await detectProjectLanguage(inmortalPath);
+describe('Extraction Engine with Local Fixture', () => {
+  it('should detect Go language from fixture repository root', async () => {
+    const lang = await detectProjectLanguage(fixturePath);
     expect(lang).toBe('go');
   });
 
-  it('should detect Modular Hexagonal topology in inmortal_gaming_backend', async () => {
-    const topology = await detectTopology(inmortalPath);
+  it('should detect Modular Hexagonal topology in fixture', async () => {
+    const topology = await detectTopology(fixturePath);
     expect(topology.pattern).toContain('Hexagonal');
     expect(topology.directories.length).toBeGreaterThan(0);
     expect(topology.directories.some((d) => d.includes('adapters'))).toBe(true);
   });
 
-  it('should extract invariants, ask rules and snippets from inmortal_gaming_backend using CodeGraph', async () => {
+  it('should extract invariants, ask rules and snippets from fixture using CodeGraph', async () => {
     const cg = new CodeGraphWrapper();
     const isAvail = await cg.isAvailable();
     if (!isAvail) {
@@ -27,12 +30,12 @@ describe('Extraction Engine', () => {
       return;
     }
 
-    const playbook = await extractPlaybook(inmortalPath, { codeGraph: cg });
+    const playbook = await extractPlaybook(fixturePath, { codeGraph: cg });
 
     expect(playbook.language).toBe('go');
     expect(playbook.topology.pattern).toContain('Hexagonal');
 
-    // Invariants must include null-byte sanitizer and DTO validation
+    // Invariants must include null-byte sanitizer, DTO validation, and API response envelope
     const hasSanitizer = playbook.invariants.some((i) => i.id === 'null-byte-sanitizer');
     const hasNotBlank = playbook.invariants.some((i) => i.id === 'dto-notblank-validation');
     const hasResponse = playbook.invariants.some((i) => i.id === 'api-response-envelope');

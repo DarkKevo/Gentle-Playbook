@@ -5,3 +5,6 @@ dist/
 # Local Pi runtime state
 .atl/
 .codegraph/
+
+# Issues tracking document
+issue_list.md
