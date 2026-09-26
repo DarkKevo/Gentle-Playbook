@@ -203,10 +203,10 @@ gentle-playbook delete python [--yes]
 
 | Comando | Descripción |
 |---|---|
-| `/gentle-playbook` | Abre el selector interactivo para auditar el playbook activo. |
-| `/gentle-playbook show <lang>` | Muestra las normativas e invariantes del lenguaje en el chat. |
+| `/playbook` o `/gentle-playbook` | Selector interactivo para auditar el playbook activo o listar los instalados. |
+| `/playbook show <lang>` | Muestra las normativas, ask catalog y prohibiciones del lenguaje en el chat. |
+| `/playbook extract [path]` | Lanza la extracción con el **Agente de Esencia** (sin argumento extrae sobre el repo actual). |
 | `/gentle-playbook-add` | Flujo interactivo guiado para agregar una nueva regla con síntesis LLM. |
-| `/gentle-playbook extract <path>` | Lanza la extracción desde Pi. |
 
 ---
 

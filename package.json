@@ -1,6 +1,6 @@
 {
   "name": "gentle-playbook",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Architectural Playbook & Essence Manager for Pi and el Gentleman",
   "type": "module",
   "main": "dist/index.js",
