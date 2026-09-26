@@ -228,10 +228,8 @@ async function handleAddRule(
 export default function (pi: ExtensionAPI) {
   const storage = new PlaybookStorage();
 
-  // 1. Register Slash Command: /gentle-playbook
-  pi.registerCommand('gentle-playbook', {
-    description: 'Inspect, extract, or manage language architecture playbooks and agent preferences',
-    handler: async (args: string, ctx: any) => {
+  // 1. Register Slash Command: /gentle-playbook and alias /playbook
+  const playbookCommandHandler = async (args: string, ctx: any) => {
       const parts = args.trim().split(/\s+/).filter(Boolean);
       const sub = parts[0] || 'list';
       const includeSnippets = args.includes('--snippets') || args.includes('--full');
@@ -383,7 +381,17 @@ export default function (pi: ExtensionAPI) {
           ctx.ui?.notify(`Fallo en la extracción: ${err.message}`, 'error');
         }
       }
-    },
+  };
+
+  pi.registerCommand('gentle-playbook', {
+    description: 'Inspect, extract, or manage language architecture playbooks and agent preferences',
+    handler: playbookCommandHandler,
+  });
+
+  // Short alias for convenient autocomplete: /playbook
+  pi.registerCommand('playbook', {
+    description: 'Inspect, extract, or manage language architecture playbooks (alias)',
+    handler: playbookCommandHandler,
   });
 
   // 2. Register Dedicated Slash Command: /gentle-playbook-add
