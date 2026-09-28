@@ -38,24 +38,36 @@ Every developer has an architectural "essence" for each programming language (e.
 When working in a project with an active language (e.g. `go.mod`), inspect `~/.config/gentle-playbook/languages/<language>.md`. Read the topology and invariants before planning or creating files.
 If `agents-preferences.md` exists, its rules supervise and delimit agent tool execution across all projects.
 
+Interactive commands in Pi:
+- `/playbook` or `/gentle-playbook`: Interactive selector and detailed inventory of active playbooks.
+- `/playbook show <lang|agents> [--full]`: Displays the playbook's rules, triggers, and prohibitions in chat.
+
 ### Adding Rules Interactively
 Run:
 ```
-/gentle-playbook-add [lang|agents]
+/playbook add [lang|agents]
 ```
-Or `/gentle-playbook add [lang|agents]`.
+Or `/gentle-playbook-add [lang|agents]`.
 
 - If no argument is provided, an interactive prompt will ask:
   - 🤖 **Preferencias de Agente** (Supervisión y Gobernanza de IA)
   - 💻 **Regla de Arquitectura de Lenguaje** (Go, TypeScript, Python, etc.)
 - Next, prompts for the natural language description (e.g., *"no se hace write si no yo lo apruebo, primero el approach del cambio y luego mi aprobación"*).
+- Pre-checks against hostile prompt injection or meta-instruction patterns.
 - Lets the user select whether it is `[NORMATIVA]` (invariant) or `[ASK]` (checkpoint).
 - Uses the model to synthesize the rule structure (action/surface, trigger, anti-trigger, prompt).
 - Shows a confirmation preview and saves it to the playbook.
 
+### Managing & Deleting Rules Interactively
+Run:
+```
+/playbook delete [lang|agents] [--rule <id>]
+```
+- Interactive guided menus (`ui.select` and `ui.confirm`) to surgically delete a specific rule or safely erase an entire language playbook with dual confirmation.
+
 ### Extracting a New Playbook from a Reference Repo
 Run the extraction command in Pi:
 ```bash
-/gentle-playbook extract [path-to-repo] [--lang <lang>]
+/playbook extract [path-to-repo] [--lang <lang>]
 ```
 This runs the Essence Explorer Agent backed by CodeGraph (or native file exploration fallback) to analyze topology, count empirical evidence (file:line), detect invariants, ask checkpoints and prohibitions, and perform AI-driven semantic diffing with 1-to-1 interactive conflict arbitration in the TUI before writing to disk.

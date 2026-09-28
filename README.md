@@ -105,7 +105,7 @@ Cuando abrís una sesión de Pi en cualquier proyecto:
 
 ---
 
-### 2. Comando Interactivo en Pi: `/gentle-playbook-add`
+### 2. Comando Interactivo en Pi: `/playbook add` (o `/gentle-playbook-add`)
 Agregá nuevas preferencias arquitectónicas o de gobernanza mediante un flujo interactivo guiado:
 
 1. **Pregunta 1 (Categoría):** Elegís entre:
@@ -139,7 +139,7 @@ A través del hook `before_agent_start`, las preferencias de agente se cargan **
 
 ---
 
-### 4. Extracción de Esencia desde un Repositorio: `/gentle-playbook extract`
+### 4. Extracción de Esencia desde un Repositorio: `/playbook extract`
 Si ya tenés un proyecto de referencia donde programaste con tu estilo (por ejemplo un backend en Go, un servicio en TypeScript, Rust o Python):
 
 ```bash
@@ -148,7 +148,7 @@ Si ya tenés un proyecto de referencia donde programaste con tu estilo (por ejem
 ```
 
 #### 🧠 ¿Cómo funciona la extracción y el arbitraje agéntico en Pi?
-A diferencia de herramientas que buscan palabras fijas o linters de juguete, `/gentle-playbook extract` despliega un **Agente Explorador de Esencia** respaldado por **CodeGraph**:
+A diferencia de herramientas que buscan palabras fijas o linters de juguete, `/playbook extract` despliega un **Agente Explorador de Esencia** respaldado por **CodeGraph**:
 
 1. **Exploración Profunda con CodeGraph & Fallback Nativo:**
    - Si `codegraph` está disponible en tu sistema (`CODEGRAPH_BIN`), el agente indexa el repositorio completo (`codegraph ensureIndex`) y extrae el mapa integral de símbolos, interfaces, handlers, middlewares y tipos con sus números de línea exactos.
@@ -174,43 +174,38 @@ A diferencia de herramientas que buscan palabras fijas o linters de juguete, `/g
 
 ---
 
-### 4. Comandos de Terminal (CLI)
+### 5. Gestión y Eliminación Quirúrgica: `/playbook delete`
+
+Administrá y depurá tus normas directamente desde el TUI de Pi con asistentes interactivos guiados:
 
 ```bash
-# Listar todos los playbooks y cantidad de reglas registradas
-gentle-playbook list
+# Modo interactivo asistido por menús (ui.select)
+/playbook delete
 
-# Ver el resumen de normas y preguntas condicionales de un lenguaje
-gentle-playbook show go
-
-# Ver el playbook completo incluyendo los snippets de código fuente
-gentle-playbook show go --full
-
-# Agregar una regla individual (invariante, ask o nunca)
-gentle-playbook add go --type invariant --title "No Null Bytes" --surface "internal/http/" --description "Rechazar caracteres nulos"
-gentle-playbook add go --type ask --title "Rate Limit" --trigger "Rutas públicas" --prompt "¿Aplicar rate limiter?"
-gentle-playbook add go --type never --description "No usar ORMs pesados; SQL explícito con pgx"
-
-# Extraer y actualizar un playbook desde un repositorio
-gentle-playbook extract /ruta/al/repo [--lang go]
+# O especificar directamente el lenguaje / agents
+/playbook delete go
+/playbook delete agents
 
 # Borrado quirúrgico de una regla específica por su ID
-gentle-playbook delete go --rule dto-notblank-validation
-
-# Eliminar un playbook completo (con confirmación de seguridad interactiva o --yes)
-gentle-playbook delete python [--yes]
+/playbook delete go --rule dto-notblank-validation
 ```
+
+- **Borrado de Regla Individual:** Podés seleccionar una regla específica de la lista o pasar `--rule <id>`. La extensión te pedirá confirmación (`ui.confirm`) antes de removerla y actualizar la versión del playbook.
+- **Borrado de Playbook Completo:** Si elegís borrar el playbook entero, requiere una **doble confirmación explícita** para prevenir pérdidas accidentales.
 
 ---
 
-### 5. Slash Commands en Pi
+## ⌨️ Slash Commands en Pi (TUI-First)
 
-| Comando | Descripción |
-|---|---|
-| `/playbook` o `/gentle-playbook` | Selector interactivo para auditar el playbook activo o listar los instalados. |
-| `/playbook show <lang>` | Muestra las normativas, ask catalog y prohibiciones del lenguaje en el chat. |
-| `/playbook extract [path]` | Lanza la extracción con el **Agente de Esencia** (sin argumento extrae sobre el repo actual). |
-| `/gentle-playbook-add` | Flujo interactivo guiado para agregar una nueva regla con síntesis LLM. |
+Toda la funcionalidad de `gentle-playbook` está integrada de forma nativa en Pi, sin necesidad de binarios de consola ni cambios de ventana:
+
+| Comando | Alias | Descripción |
+|---|---|---|
+| `/playbook` | `/gentle-playbook` | Menú interactivo: auditar playbooks guardados, inventario de reglas y estado. |
+| `/playbook show <lang\|agents>` | `/gentle-playbook show` | Despliega en el chat las normas, checkpoints y prohibiciones del lenguaje (con `--full` incluye snippets de código). |
+| `/playbook extract [path]` | `/gentle-playbook extract` | Lanza el **Agente de Esencia** con CodeGraph, diff semántico de IA y arbitraje 1 a 1 en el TUI. |
+| `/playbook add [lang\|agents]` | `/gentle-playbook-add` | Flujo interactivo guiado para agregar una nueva regla sintetizada con LLM y validación anti-inyección. |
+| `/playbook delete [lang\|agents]` | `/gentle-playbook delete` | Menú interactivo para eliminar reglas individuales quirúrgicamente o borrar playbooks completos. |
 
 ---
 
