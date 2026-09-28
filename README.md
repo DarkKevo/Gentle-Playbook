@@ -2,7 +2,7 @@
 
 > **Architectural Essence & Opinionated Language Playbook Manager for Pi & el Gentleman**
 
-`gentle-playbook` es una extensión nativa y CLI para **Pi** diseñada para capturar, almacenar, hacer cumplir y evolucionar las normas de arquitectura de software personalizadas por lenguaje de programación.
+`gentle-playbook` es una extensión nativa para **Pi (TUI-First)** diseñada para capturar, almacenar, hacer cumplir y evolucionar las normas de arquitectura de software personalizadas por lenguaje de programación. Toda la interacción, extracción agéntica y gestión se realiza interactivamente dentro de Pi.
 
 ---
 
@@ -67,7 +67,6 @@ curl -fsSL https://raw.githubusercontent.com/DarkKevo/Gentle-Playbook/master/ins
 El script se encarga de:
 - Descargar la última versión en `~/.local/share/gentle-playbook`.
 - Instalar dependencias npm y compilar TypeScript.
-- Enlazar el binario CLI en `~/.local/bin/gentle-playbook`.
 - Registrar el paquete nativo en Pi (`pi install`).
 - Crear el directorio de almacenamiento `~/.config/gentle-playbook/languages/`.
 
@@ -128,14 +127,11 @@ Además de reglas arquitectónicas de código por lenguaje, `gentle-playbook` pe
 - **Límites Operativos (Normativas/Invariants):** Restricciones estrictas y no negociables sobre herramientas y comportamiento del agente (ej: requerir aprobación previa del enfoque y código antes de cualquier `write`/`edit`).
 - **Puntos de Control (Ask Catalog):** Momentos donde el agente debe detenerse y pedir confirmación antes de actuar (ej: comandos destructivos en bash, migraciones de base de datos).
 
-#### Uso y Comandos Directos:
+#### Uso y Comandos Directos en Pi:
 ```bash
-/gentle-playbook add agents
-/gentle-playbook show agents
-```
-O desde la terminal:
-```bash
-gentle-playbook show agents
+/playbook add agents
+/playbook show agents
+/playbook delete agents
 ```
 
 #### Enforcement Transversal en Runtime:
@@ -148,10 +144,8 @@ Si ya tenés un proyecto de referencia donde programaste con tu estilo (por ejem
 
 ```bash
 # Dentro de Pi (TUI: Agente Explorador con CodeGraph, Diff Semántico y Arbitraje 1 a 1)
-/gentle-playbook extract [/ruta/al/repo] [--lang <lenguaje>]
+/playbook extract [/ruta/al/repo] [--lang <lenguaje>]
 ```
-
-> **Nota sobre el CLI:** La extracción de normas arquitectónicas es un proceso agéntico asistido por IA que requiere razonamiento profundo, lectura de manifiestos y aprobación interactiva. Si ejecutás `gentle-playbook extract` desde una terminal común, la herramienta detecta tu proyecto y te orienta a correrlo dentro de Pi, sin persistir jamás archivos vacíos ni fingir análisis estáticos offline.
 
 #### 🧠 ¿Cómo funciona la extracción y el arbitraje agéntico en Pi?
 A diferencia de herramientas que buscan palabras fijas o linters de juguete, `/gentle-playbook extract` despliega un **Agente Explorador de Esencia** respaldado por **CodeGraph**:

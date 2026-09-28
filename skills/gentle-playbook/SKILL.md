@@ -58,4 +58,4 @@ Run the extraction command in Pi:
 ```bash
 /gentle-playbook extract [path-to-repo] [--lang <lang>]
 ```
-This runs the Essence Explorer Agent backed by CodeGraph (or native file exploration fallback) to analyze topology, count empirical evidence (file:line), detect invariants, ask checkpoints and prohibitions, and perform AI-driven semantic diffing with 1-to-1 interactive conflict arbitration in the TUI before writing to disk. Running `gentle-playbook extract` from the terminal detects project structure and guides you to run the interactive extraction inside Pi.
+This runs the Essence Explorer Agent backed by CodeGraph (or native file exploration fallback) to analyze topology, count empirical evidence (file:line), detect invariants, ask checkpoints and prohibitions, and perform AI-driven semantic diffing with 1-to-1 interactive conflict arbitration in the TUI before writing to disk.

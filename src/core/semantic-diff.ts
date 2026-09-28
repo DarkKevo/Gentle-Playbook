@@ -88,7 +88,16 @@ export function parseSemanticDiffResponse(raw: string): SemanticDiffResponse | n
   }
 }
 
-function findExistingRule<T extends { id: string; title?: string; description?: string }>(
+/**
+ * CANONICAL RULE IDENTITY CONTRACT (Issue #7):
+ * 1. Rule identity is strictly defined by the rule's canonical `id`.
+ * 2. Two rules with different IDs are separate entities; the LLM does not redefine identity.
+ * 3. Matching between draft rules and existing rules is strictly deterministic by ID.
+ *    Fuzzy matching by title or substring is forbidden to prevent divergent behavior.
+ * 4. The LLM acts solely as a semantic advisor, detecting conceptual redundancies
+ *    and conflicts that the user must explicitly arbitrate.
+ */
+function findExistingRule<T extends { id: string }>(
   list: T[],
   candidateId?: string
 ): T | undefined {
@@ -96,21 +105,8 @@ function findExistingRule<T extends { id: string; title?: string; description?: 
   const clean = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
   const target = clean(candidateId);
 
-  // 1. Exact or normalized ID match
-  let found = list.find((e) => e.id === candidateId || clean(e.id) === target);
-  if (found) return found;
-
-  // 2. Title match
-  found = list.find((e) => e.title && clean(e.title) === target);
-  if (found) return found;
-
-  // 3. Substring match in title
-  found = list.find(
-    (e) => e.title && (clean(e.title).includes(target) || target.includes(clean(e.title)))
-  );
-  if (found) return found;
-
-  return undefined;
+  // Match strictly by exact or normalized ID (never by title or substring)
+  return list.find((e) => e.id === candidateId || clean(e.id) === target);
 }
 
 export async function computeSemanticPlaybookDiff(

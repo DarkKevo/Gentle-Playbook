@@ -53,14 +53,9 @@ npm install --silent
 echo "🔨 Building TypeScript artifacts..."
 npm run build --silent
 
-# 4. Setup CLI in ~/.local/bin
-mkdir -p "${BIN_DIR}"
+# 4. Setup storage directories & clean legacy CLI links
 mkdir -p "${CONFIG_DIR}"
-
-CLI_BIN="${BIN_DIR}/gentle-playbook"
-chmod +x "${SRC_DIR}/dist/cli.js"
-ln -sf "${SRC_DIR}/dist/cli.js" "${CLI_BIN}"
-echo "✓ Linked CLI binary to ${CLI_BIN}"
+rm -f "${BIN_DIR}/gentle-playbook"
 
 # 5. Register in Pi if pi is available
 if command -v pi >/dev/null 2>&1; then
@@ -153,12 +148,9 @@ echo ""
 echo "=========================================="
 echo "  ✓ Installation complete!"
 echo "=========================================="
-echo "Available CLI commands:"
-echo "  gentle-playbook list"
-echo "  gentle-playbook show <lang>"
-echo "  gentle-playbook extract <path-to-repo>"
-echo ""
-echo "Inside Pi:"
-echo "  /gentle-playbook           (inspect active playbooks)"
-echo "  /gentle-playbook-add       (interactive rule synthesizer)"
+echo "Inside Pi (TUI-First):"
+echo "  /playbook                  (ver playbooks activos y estado)"
+echo "  /playbook extract          (extracción agéntica asistida por IA)"
+echo "  /gentle-playbook-add       (sintetizador interactivo de reglas con IA)"
+echo "  /playbook delete           (gestión y eliminación interactiva de reglas o playbooks)"
 echo "=========================================="

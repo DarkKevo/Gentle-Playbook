@@ -1,3 +1,13 @@
+/**
+ * CANONICAL RULE IDENTITY CONTRACT (Issue #7):
+ * - Rule identity is strictly and uniquely determined by rule `id`.
+ * - Two rules with different IDs are distinct entities; the diff engine never merges
+ *   or equates them based on title similarity.
+ * - Deterministic diff compares `incoming.id === existing.id`.
+ * - The LLM semantic layer provides advisory conflict detection for user arbitration,
+ *   never silent or automatic ID collapse.
+ */
+
 import {
   Playbook,
   InvariantRule,

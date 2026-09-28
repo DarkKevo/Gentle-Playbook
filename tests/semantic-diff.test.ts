@@ -363,4 +363,101 @@ Espero que este reporte te sea de gran utilidad para el merge.`;
     expect(diff.neverRules).toHaveLength(0);
     expect(diff.snippets).toHaveLength(0);
   });
+
+  describe('Rule Identity Contract & Non-Collapsing Guarantee (Issue #7)', () => {
+    it('should NOT match or collapse rules by identical titles when IDs differ', async () => {
+      const existingPlaybook: Playbook = {
+        language: 'go',
+        version: 1,
+        updatedAt: '2026-03-30',
+        topology: { pattern: 'Standard', directories: [] },
+        invariants: [
+          {
+            id: 'legacy-rate-limit',
+            type: 'invariant',
+            title: 'Rate Limiting Middleware',
+            surface: 'internal/http/',
+            description: 'Limit requests to 100 req/sec',
+          },
+        ],
+        askRules: [],
+        snippets: [],
+      };
+
+      const incomingPlaybook: Playbook = {
+        language: 'go',
+        version: 1,
+        updatedAt: '2026-03-30',
+        topology: { pattern: 'Standard', directories: [] },
+        invariants: [
+          {
+            // Exact same title as existing, but completely different ID and surface
+            id: 'v2-rate-limit',
+            type: 'invariant',
+            title: 'Rate Limiting Middleware',
+            surface: 'internal/adapters/handlers/',
+            description: 'Apply distributed token bucket limiter',
+          },
+        ],
+        askRules: [],
+        snippets: [],
+      };
+
+      // When the LLM outputs NEW because the IDs are different
+      const modelResponse = `
+\`\`\`json
+{
+  "invariants": [
+    { "incomingId": "v2-rate-limit", "status": "NEW" }
+  ]
+}
+\`\`\`
+`;
+
+      const diff = await computeSemanticPlaybookDiff(
+        incomingPlaybook,
+        existingPlaybook,
+        async () => modelResponse
+      );
+
+      // Must remain NEW and must NOT match or collapse legacy-rate-limit
+      expect(diff.stats.newRules).toBe(1);
+      expect(diff.stats.conflictRules).toBe(0);
+      expect(diff.invariants[0].status).toBe('new');
+      expect(diff.invariants[0].existing).toBeUndefined();
+    });
+
+    it('should adhere to golden JSON schema output from model', async () => {
+      const goldenResponse = `
+\`\`\`json
+{
+  "invariants": [
+    {
+      "incomingId": "b6-interfaces-any",
+      "status": "CONFLICT",
+      "existingId": "no-any-interfaces",
+      "reason": "Ambas normas prohíben interfaces con any"
+    },
+    {
+      "incomingId": "strict-null-checks",
+      "status": "NEW"
+    }
+  ],
+  "askRules": [],
+  "neverRules": [],
+  "snippets": []
+}
+\`\`\`
+`;
+      const diff = await computeSemanticPlaybookDiff(
+        incoming,
+        existing,
+        async () => goldenResponse
+      );
+
+      expect(diff.stats.conflictRules).toBe(1);
+      expect(diff.stats.newRules).toBe(1);
+      expect(diff.stats.identicalRules).toBe(0);
+    });
+  });
 });

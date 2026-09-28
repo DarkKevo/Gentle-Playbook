@@ -6,6 +6,7 @@ import { runAgentExtraction } from './extract/agent-extractor.js';
 import { computePlaybookDiff, mergePlaybooks, RuleResolution, PlaybookDiffResult } from './core/diff.js';
 import { computeSemanticPlaybookDiff, resolveConflictWithAI } from './core/semantic-diff.js';
 import { formatPlaybookForDisplay, formatPlaybookForSystemPrompt, formatAgentPreferencesForSystemPrompt } from './core/parser.js';
+import { detectPromptInjection } from './core/security.js';
 import { InvariantRule, AskRule, RuleType, Playbook, AGENTS_PREFERENCES_ID } from './core/schema.js';
 import { buildSynthesisPrompt, parseSynthesizedRule, SynthesizedRule } from './core/synthesizer.js';
 import { getLanguageMenuLabels, resolveLanguage } from './core/languages.js';
@@ -82,6 +83,16 @@ async function handleAddRule(
 
   if (!rawDescription || !rawDescription.trim()) {
     ctx.ui?.notify('Operación cancelada: No se ingresó ninguna descripción.', 'info');
+    return;
+  }
+
+  // Pre-check for prompt injection or hostile meta-instructions
+  const initialCheck = detectPromptInjection(rawDescription);
+  if (initialCheck.isSuspicious) {
+    ctx.ui?.notify(
+      `❌ Regla rechazada: se detectaron patrones de meta-instrucción o inyección de prompt (${initialCheck.reason}).`,
+      'error'
+    );
     return;
   }
 
@@ -247,38 +258,75 @@ export default function (pi: ExtensionAPI) {
         const hasAgents = await storage.hasAgentPreferences();
 
         if (languages.length === 0 && !hasAgents) {
-          ctx.ui?.notify('gentle-playbook: No playbooks found in storage.', 'info');
+          ctx.ui?.notify('gentle-playbook: No hay playbooks guardados en el almacenamiento.', 'info');
           return;
         }
 
-        const options: string[] = [];
+        const entries: Array<{ id: string; label: string; summary: string }> = [];
+
         if (hasAgents) {
-          options.push('🤖 agents-preferences (Gobernanza de Agente)');
+          const agentPb = await storage.getAgentPreferences();
+          if (agentPb) {
+            const counts: string[] = [];
+            counts.push(`${agentPb.invariants.length} normativas`);
+            counts.push(`${agentPb.askRules.length} asks`);
+            if (agentPb.neverRules && agentPb.neverRules.length > 0) {
+              counts.push(`${agentPb.neverRules.length} never`);
+            }
+            const countStr = counts.join(', ');
+            entries.push({
+              id: AGENTS_PREFERENCES_ID,
+              label: `🤖 agents-preferences (${countStr})`,
+              summary: `Agents Preferences (v${agentPb.version}): ${countStr} [SUPERVISION]`,
+            });
+          }
         }
-        options.push(...languages);
+
+        for (const lang of languages) {
+          const pb = await storage.getPlaybook(lang);
+          if (pb) {
+            const counts: string[] = [];
+            counts.push(`${pb.invariants.length} invariantes`);
+            counts.push(`${pb.askRules.length} ask rules`);
+            if (pb.neverRules && pb.neverRules.length > 0) {
+              counts.push(`${pb.neverRules.length} prohibiciones (never)`);
+            }
+            if (pb.snippets && pb.snippets.length > 0) {
+              counts.push(`${pb.snippets.length} snippets`);
+            }
+            const countStr = counts.join(', ');
+            entries.push({
+              id: lang,
+              label: `• ${lang} (${countStr})`,
+              summary: `${lang.toUpperCase()} (v${pb.version}): ${countStr}`,
+            });
+          }
+        }
 
         if (ctx.ui?.select) {
-          const selected = await ctx.ui.select(
-            'Select a playbook to view:',
-            options
+          const selectedLabel = await ctx.ui.select(
+            'Selecciona un playbook para explorar:',
+            entries.map((e) => e.label)
           );
-          if (selected && typeof selected === 'string') {
-            const cleanId = selected.includes('agents-preferences') ? AGENTS_PREFERENCES_ID : selected;
-            const pb = await storage.getPlaybook(cleanId);
-            if (pb) {
-              const label = pb.language === AGENTS_PREFERENCES_ID ? 'Agents Preferences' : pb.language.toUpperCase();
-              const summary = `${label} (v${pb.version}): ${pb.invariants.length} normativas, ${pb.askRules.length} ask rules`;
-              ctx.ui?.notify(summary, 'info');
-
-              pi.sendMessage({
-                customType: 'gentle-playbook',
-                content: formatPlaybookForDisplay(pb, { includeSnippets }),
-                display: true,
-              });
+          if (selectedLabel) {
+            const matched = entries.find((e) => e.label === selectedLabel);
+            if (matched) {
+              const pb = await storage.getPlaybook(matched.id);
+              if (pb) {
+                ctx.ui?.notify(matched.summary, 'info');
+                pi.sendMessage({
+                  customType: 'gentle-playbook',
+                  content: formatPlaybookForDisplay(pb, { includeSnippets }),
+                  display: true,
+                });
+              }
             }
           }
         } else {
-          ctx.ui?.notify(`Available playbooks: ${options.join(', ')}`, 'info');
+          ctx.ui?.notify(
+            'Playbooks disponibles:\n' + entries.map((e) => e.summary).join('\n'),
+            'info'
+          );
         }
       } else if (sub === 'show') {
         const langInput = parts[1];
@@ -300,9 +348,165 @@ export default function (pi: ExtensionAPI) {
           content: formatPlaybookForDisplay(pb, { includeSnippets }),
           display: true,
         });
+      } else if (sub === 'delete') {
+        let targetLang = parts[1];
+        const ruleFlagIdx = parts.indexOf('--rule');
+        const directRuleId = ruleFlagIdx >= 0 ? parts[ruleFlagIdx + 1] : undefined;
+
+        if (!targetLang || targetLang.startsWith('--')) {
+          const languages = await storage.listLanguages();
+          const hasAgents = await storage.hasAgentPreferences();
+          const options: string[] = [];
+          if (hasAgents) options.push('🤖 agents-preferences (Gobernanza de Agente)');
+          options.push(...languages);
+
+          if (options.length === 0) {
+            ctx.ui?.notify('No hay playbooks guardados para eliminar.', 'info');
+            return;
+          }
+
+          if (ctx.ui?.select) {
+            const selected = await ctx.ui.select(
+              'Selecciona el playbook que deseas gestionar o eliminar:',
+              options
+            );
+            if (!selected || typeof selected !== 'string') return;
+            targetLang = selected.includes('agents-preferences') ? AGENTS_PREFERENCES_ID : selected;
+          } else {
+            ctx.ui?.notify('Uso: /playbook delete <language|agents> [--rule <id>]', 'warning');
+            return;
+          }
+        } else {
+          targetLang = targetLang === 'agents' || targetLang === 'agents-preferences'
+            ? AGENTS_PREFERENCES_ID
+            : resolveLanguage(targetLang);
+        }
+
+        const pb = await storage.getPlaybook(targetLang);
+        if (!pb) {
+          ctx.ui?.notify(`El playbook "${targetLang}" no existe en el almacenamiento.`, 'error');
+          return;
+        }
+
+        const targetDisplayName = targetLang === AGENTS_PREFERENCES_ID ? 'Agents Preferences' : targetLang.toUpperCase();
+
+        // Si se especificó directamente --rule <id> por comando
+        if (directRuleId) {
+          if (ctx.ui?.confirm) {
+            const confirmed = await ctx.ui.confirm(
+              'Confirmar eliminación de regla',
+              `¿Deseas eliminar la regla "${directRuleId}" de ${targetDisplayName}?`
+            );
+            if (!confirmed) {
+              ctx.ui?.notify('Eliminación de regla cancelada.', 'info');
+              return;
+            }
+          }
+          const res = await storage.deleteRule(targetLang, directRuleId);
+          if (res.deleted) {
+            ctx.ui?.notify(`✓ Regla "${directRuleId}" (${res.ruleType}) eliminada con éxito de ${targetDisplayName}.`, 'info');
+          } else {
+            ctx.ui?.notify(`Error: La regla "${directRuleId}" no se encontró en ${targetDisplayName}.`, 'error');
+          }
+          return;
+        }
+
+        // Flujo Interactivo en TUI: 2 opciones (regla específica vs playbook entero)
+        if (ctx.ui?.select) {
+          const actionChoice = await ctx.ui.select(
+            `Gestión de eliminación para "${targetDisplayName}":`,
+            [
+              '✂️ Eliminar una regla específica del playbook',
+              '🗑️ Eliminar el playbook completo de este lenguaje',
+            ]
+          );
+          if (!actionChoice) return;
+
+          if (actionChoice.includes('completo')) {
+            // Opción 2: Borrar el playbook entero
+            let confirmed = true;
+            if (ctx.ui?.confirm) {
+              confirmed = await ctx.ui.confirm(
+                '⚠️ Confirmar eliminación total',
+                `¿Estás seguro de que deseas eliminar permanentemente el playbook completo de ${targetDisplayName}?`
+              );
+            }
+            if (confirmed) {
+              await storage.deletePlaybook(targetLang);
+              ctx.ui?.notify(`✓ Playbook de ${targetDisplayName} eliminado por completo.`, 'info');
+            } else {
+              ctx.ui?.notify('Eliminación del playbook cancelada por el usuario.', 'info');
+            }
+            return;
+          }
+
+          // Opción 1: Borrar una regla específica
+          const rulesList: Array<{ id: string; label: string }> = [];
+          for (const inv of pb.invariants) {
+            rulesList.push({ id: inv.id, label: `[INVARIANT] ${inv.id}: ${inv.title}` });
+          }
+          for (const ask of pb.askRules) {
+            rulesList.push({ id: ask.id, label: `[ASK] ${ask.id}: ${ask.title}` });
+          }
+          for (const never of (pb.neverRules || [])) {
+            rulesList.push({ id: never.id, label: `[NEVER] ${never.id}: ${never.description.slice(0, 40)}` });
+          }
+          for (const snip of pb.snippets) {
+            rulesList.push({ id: snip.id, label: `[SNIPPET] ${snip.id}: ${snip.title}` });
+          }
+
+          if (rulesList.length === 0) {
+            ctx.ui?.notify(`El playbook "${targetDisplayName}" no tiene reglas individuales para eliminar.`, 'warning');
+            return;
+          }
+
+          const selectedRule = await ctx.ui.select(
+            'Selecciona la regla que deseas eliminar:',
+            rulesList.map((r) => r.label)
+          );
+          if (!selectedRule) return;
+
+          const matched = rulesList.find((r) => r.label === selectedRule);
+          if (matched) {
+            let confirmed = true;
+            if (ctx.ui?.confirm) {
+              confirmed = await ctx.ui.confirm(
+                'Confirmar eliminación de regla',
+                `¿Eliminar permanentemente la regla "${matched.id}" de ${targetDisplayName}?`
+              );
+            }
+            if (confirmed) {
+              const res = await storage.deleteRule(targetLang, matched.id);
+              if (res.deleted) {
+                ctx.ui?.notify(`✓ Regla "${matched.id}" (${res.ruleType}) eliminada con éxito de ${targetDisplayName}.`, 'info');
+              } else {
+                ctx.ui?.notify(`Error: La regla "${matched.id}" no se pudo eliminar.`, 'error');
+              }
+            } else {
+              ctx.ui?.notify('Eliminación de regla cancelada.', 'info');
+            }
+          }
+          return;
+        }
+
+        // Sin ctx.ui.select (entorno headless / fallback)
+        let confirmed = true;
+        if (ctx.ui?.confirm) {
+          confirmed = await ctx.ui.confirm(
+            'Confirmar eliminación',
+            `¿Deseas eliminar el playbook de ${targetDisplayName}?`
+          );
+        }
+        if (confirmed) {
+          await storage.deletePlaybook(targetLang);
+          ctx.ui?.notify(`✓ Playbook de ${targetDisplayName} eliminado.`, 'info');
+        } else {
+          ctx.ui?.notify('Operación cancelada.', 'info');
+        }
       } else if (sub === 'extract') {
         let inputPath: string | undefined;
         let langOverride: string | undefined;
+        let autoConfirm = false;
 
         for (let i = 1; i < parts.length; i++) {
           if (parts[i] === '--lang') {
@@ -310,6 +514,8 @@ export default function (pi: ExtensionAPI) {
               langOverride = resolveLanguage(parts[i + 1]);
               i++;
             }
+          } else if (parts[i] === '--yes' || parts[i] === '-y') {
+            autoConfirm = true;
           } else if (!parts[i].startsWith('--') && !inputPath) {
             inputPath = parts[i];
           }
@@ -547,7 +753,7 @@ export default function (pi: ExtensionAPI) {
             }
           }
 
-          // Confirmación interactiva si la UI lo permite
+          // Confirmación interactiva si la UI lo permite, o fail-safe sin UI
           if (ctx.ui?.confirm) {
             const summaryParts = [];
             if (diff.stats.newRules > 0) summaryParts.push(`${diff.stats.newRules} nuevas`);
@@ -562,6 +768,18 @@ export default function (pi: ExtensionAPI) {
               ctx.ui?.notify('Guardado cancelado por el usuario. No se modificó el playbook en disco.', 'info');
               return;
             }
+          } else if (!autoConfirm) {
+            // Fail-safe: Sin confirmación interactiva y sin --yes, no se escribe en disco
+            ctx.ui?.notify(
+              'Extracción completada sin guardar: se requiere confirmación interactiva o el flag --yes para escribir en disco.',
+              'warning'
+            );
+            pi.sendMessage({
+              customType: 'gentle-playbook-draft',
+              content: `⚠️ **Extracción finalizada (Solo Lectura):**\nNo hay interfaz interactiva de confirmación y no se pasó \`--yes\`. No se modificó el disco.\n\n` + formatPlaybookForDisplay(mergePlaybooks(draft, existing, resolutions, diff)),
+              display: true,
+            });
+            return;
           }
 
           const merged = mergePlaybooks(draft, existing, resolutions, diff);
