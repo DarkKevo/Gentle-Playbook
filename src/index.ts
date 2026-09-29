@@ -32,7 +32,11 @@ async function handleAddRule(
   pi: ExtensionAPI
 ): Promise<void> {
   const parts = args.trim().split(/\s+/).filter(Boolean);
-  let targetLang = parts[0] === 'add' ? parts[1] : parts[0];
+  let targetLang: string | undefined = parts[0] === 'add' ? parts[1] : parts[0];
+  const autoConfirm = parts.includes('--yes') || parts.includes('-y');
+  if (targetLang === '--yes' || targetLang === '-y') {
+    targetLang = undefined;
+  }
 
   // 1. Pregunta 1: ¿Qué tipo de regla es (Agente vs Lenguaje)?
   if (!targetLang) {
@@ -167,13 +171,22 @@ async function handleAddRule(
     preview = `Título: [ASK] ${synthesized.title}\nSurface: ${synthesized.surface}\nTrigger: ${synthesized.trigger}\nAnti-Trigger: ${synthesized.antiTrigger}\nPregunta: "${synthesized.prompt}"\nDefault: ${synthesized.defaultAction}`;
   }
 
-  // Confirm dialog
-  let confirmed = true;
+  // Confirm dialog or fail-safe without UI
+  let confirmed = false;
   if (ctx.ui?.confirm) {
     confirmed = await ctx.ui.confirm(
       `¿Deseas guardar esta regla en ${targetDisplayName}?`,
       preview
     );
+  } else if (autoConfirm) {
+    confirmed = true;
+  } else {
+    // Fail-safe: Sin confirmación interactiva y sin --yes, no se escribe en disco
+    ctx.ui?.notify?.(
+      '⚠️ Regla sintetizada pero no guardada: se requiere confirmación interactiva o el flag --yes para escribir en disco.',
+      'warning'
+    );
+    return;
   }
 
   if (!confirmed) {
@@ -351,6 +364,7 @@ export default function (pi: ExtensionAPI) {
         });
       } else if (sub === 'delete') {
         let targetLang = parts[1];
+        const autoConfirm = parts.includes('--yes') || parts.includes('-y');
         const ruleFlagIdx = parts.indexOf('--rule');
         const directRuleId = ruleFlagIdx >= 0 ? parts[ruleFlagIdx + 1] : undefined;
 
@@ -402,6 +416,12 @@ export default function (pi: ExtensionAPI) {
               ctx.ui?.notify('Eliminación de regla cancelada.', 'info');
               return;
             }
+          } else if (!autoConfirm) {
+            ctx.ui?.notify?.(
+              '⚠️ Eliminación cancelada: se requiere confirmación interactiva o el flag --yes para eliminar en disco.',
+              'warning'
+            );
+            return;
           }
           const res = await storage.deleteRule(targetLang, directRuleId);
           if (res.deleted) {
@@ -491,12 +511,20 @@ export default function (pi: ExtensionAPI) {
         }
 
         // Sin ctx.ui.select (entorno headless / fallback)
-        let confirmed = true;
+        let confirmed = false;
         if (ctx.ui?.confirm) {
           confirmed = await ctx.ui.confirm(
             'Confirmar eliminación',
             `¿Deseas eliminar el playbook de ${targetDisplayName}?`
           );
+        } else if (autoConfirm) {
+          confirmed = true;
+        } else {
+          ctx.ui?.notify?.(
+            '⚠️ Eliminación cancelada: se requiere confirmación interactiva o el flag --yes para eliminar en disco.',
+            'warning'
+          );
+          return;
         }
         if (confirmed) {
           await storage.deletePlaybook(targetLang);

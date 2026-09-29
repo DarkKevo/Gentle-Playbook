@@ -707,13 +707,221 @@ extracted: 2026-03-30
 
       // Verify that notify summary also contained never rules and snippets
       expect(notifyMock).toHaveBeenCalledWith(
-        expect.stringContaining('prohibiciones (never)'),
+        expect.stringContaining('1 prohibiciones (never), 1 snippets'),
         'info'
       );
+    });
+
+    it('should NOT mutate disk when add is run without UI confirm and without --yes', async () => {
+      const commands: Record<string, any> = {};
+      const mockPi: ExtensionAPI = {
+        registerCommand(name, options) {
+          commands[name] = options;
+        },
+        sendMessage: vi.fn(),
+        on: vi.fn(),
+      };
+      registerExtension(mockPi);
+
+      const notifyMock = vi.fn();
+      const ctx = {
+        cwd: tempDir,
+        modelRegistry: {
+          complete: vi.fn().mockResolvedValue({
+            content: [{ type: 'text', text: JSON.stringify({
+              id: 'test-inv',
+              title: 'Test Invariant',
+              surface: 'src/',
+              description: 'Validar',
+            }) }],
+          }),
+        },
+        model: { id: 'test' },
+        ui: {
+          input: vi.fn().mockResolvedValue('Validar inputs de prueba'),
+          notify: notifyMock,
+          // no confirm method!
+        },
+      };
+
+      await commands['gentle-playbook-add'].handler('go', ctx);
+
       expect(notifyMock).toHaveBeenCalledWith(
-        expect.stringContaining('snippets'),
+        expect.stringContaining('se requiere confirmación interactiva o el flag --yes'),
+        'warning'
+      );
+
+      const pb = await storage.getPlaybook('go');
+      expect(pb?.invariants.some((i) => i.title === 'Test Invariant')).toBe(false);
+    });
+
+    it('should mutate disk when add is run without UI confirm but with --yes', async () => {
+      const commands: Record<string, any> = {};
+      const mockPi: ExtensionAPI = {
+        registerCommand(name, options) {
+          commands[name] = options;
+        },
+        sendMessage: vi.fn(),
+        on: vi.fn(),
+      };
+      registerExtension(mockPi);
+
+      const notifyMock = vi.fn();
+      const ctx = {
+        cwd: tempDir,
+        modelRegistry: {
+          complete: vi.fn().mockResolvedValue({
+            content: [{ type: 'text', text: JSON.stringify({
+              id: 'rule-with-yes',
+              title: 'Rule With Yes',
+              surface: 'src/',
+              description: 'Auto-approved rule',
+            }) }],
+          }),
+        },
+        model: { id: 'test' },
+        ui: {
+          input: vi.fn().mockResolvedValue('Auto-approved rule'),
+          notify: notifyMock,
+          // no confirm method!
+        },
+      };
+
+      await commands['gentle-playbook-add'].handler('go --yes', ctx);
+
+      expect(notifyMock).toHaveBeenCalledWith(
+        expect.stringContaining('Regla guardada con éxito'),
         'info'
       );
+
+      const pb = await storage.getPlaybook('go');
+      expect(pb?.invariants.some((i) => i.title === 'Rule With Yes')).toBe(true);
+    });
+
+    it('should NOT mutate disk when delete is run without UI confirm and without --yes', async () => {
+      const commands: Record<string, any> = {};
+      const mockPi: ExtensionAPI = {
+        registerCommand(name, options) {
+          commands[name] = options;
+        },
+        sendMessage: vi.fn(),
+        on: vi.fn(),
+      };
+      registerExtension(mockPi);
+
+      const notifyMock = vi.fn();
+      const ctx = {
+        cwd: tempDir,
+        ui: {
+          notify: notifyMock,
+          // no select, no confirm!
+        },
+      };
+
+      await commands['gentle-playbook'].handler('delete go', ctx);
+
+      expect(notifyMock).toHaveBeenCalledWith(
+        expect.stringContaining('se requiere confirmación interactiva o el flag --yes'),
+        'warning'
+      );
+
+      // Playbook must remain intact on disk
+      const pb = await storage.getPlaybook('go');
+      expect(pb).not.toBeNull();
+    });
+
+    it('should mutate disk when delete is run without UI confirm but with --yes', async () => {
+      const commands: Record<string, any> = {};
+      const mockPi: ExtensionAPI = {
+        registerCommand(name, options) {
+          commands[name] = options;
+        },
+        sendMessage: vi.fn(),
+        on: vi.fn(),
+      };
+      registerExtension(mockPi);
+
+      const notifyMock = vi.fn();
+      const ctx = {
+        cwd: tempDir,
+        ui: {
+          notify: notifyMock,
+          // no select, no confirm!
+        },
+      };
+
+      await commands['gentle-playbook'].handler('delete go --yes', ctx);
+
+      expect(notifyMock).toHaveBeenCalledWith(
+        expect.stringContaining('eliminado'),
+        'info'
+      );
+
+      // Playbook must be gone
+      const pb = await storage.getPlaybook('go');
+      expect(pb).toBeNull();
+    });
+
+    it('should NOT delete specific rule via --rule without UI confirm and without --yes', async () => {
+      const commands: Record<string, any> = {};
+      const mockPi: ExtensionAPI = {
+        registerCommand(name, options) {
+          commands[name] = options;
+        },
+        sendMessage: vi.fn(),
+        on: vi.fn(),
+      };
+      registerExtension(mockPi);
+
+      const notifyMock = vi.fn();
+      const ctx = {
+        cwd: tempDir,
+        ui: {
+          notify: notifyMock,
+          // no confirm!
+        },
+      };
+
+      await commands['gentle-playbook'].handler('delete go --rule rule-to-delete', ctx);
+
+      expect(notifyMock).toHaveBeenCalledWith(
+        expect.stringContaining('se requiere confirmación interactiva o el flag --yes'),
+        'warning'
+      );
+
+      const pb = await storage.getPlaybook('go');
+      expect(pb?.invariants.some((i) => i.id === 'rule-to-delete')).toBe(true);
+    });
+
+    it('should delete specific rule via --rule without UI confirm when --yes is provided', async () => {
+      const commands: Record<string, any> = {};
+      const mockPi: ExtensionAPI = {
+        registerCommand(name, options) {
+          commands[name] = options;
+        },
+        sendMessage: vi.fn(),
+        on: vi.fn(),
+      };
+      registerExtension(mockPi);
+
+      const notifyMock = vi.fn();
+      const ctx = {
+        cwd: tempDir,
+        ui: {
+          notify: notifyMock,
+          // no confirm!
+        },
+      };
+
+      await commands['gentle-playbook'].handler('delete go --rule rule-to-delete --yes', ctx);
+
+      expect(notifyMock).toHaveBeenCalledWith(
+        expect.stringContaining('eliminada con éxito'),
+        'info'
+      );
+
+      const pb = await storage.getPlaybook('go');
+      expect(pb?.invariants.some((i) => i.id === 'rule-to-delete')).toBe(false);
     });
   });
 });

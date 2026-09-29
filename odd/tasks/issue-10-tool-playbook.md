@@ -16,3 +16,4 @@ Check 1 requires decoupling the playbook from the system prompt:
 - [x] Task 4: Full verification (`npm test` and `npx tsc --noEmit`) and work-unit commit.
 - [x] Task 5: Unify entry security policy across extract, manual Markdown parsing, and storage (Issue #10 - Check 2).
 - [x] Task 6: Implement wide-threshold chat hijacking defenses and tests for out-of-denylist wording (Issue #10 - Check 3).
+- [x] Task 7: Implement fail-safe confirmation contract on add and delete without UI confirm requiring --yes (Issue #10 - Check 4).
