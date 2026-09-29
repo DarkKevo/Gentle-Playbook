@@ -1,11 +1,12 @@
 import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
+import { Type } from 'typebox';
 import { PlaybookStorage } from './core/storage.js';
 import { detectProjectLanguage, detectProjectLanguages } from './extract/extractor.js';
 import { runAgentExtraction } from './extract/agent-extractor.js';
 import { computePlaybookDiff, mergePlaybooks, RuleResolution, PlaybookDiffResult } from './core/diff.js';
 import { computeSemanticPlaybookDiff, resolveConflictWithAI } from './core/semantic-diff.js';
-import { formatPlaybookForDisplay, formatPlaybookForSystemPrompt, formatAgentPreferencesForSystemPrompt } from './core/parser.js';
+import { formatPlaybookForDisplay, formatPlaybookForTool, formatAgentPreferencesForTool } from './core/parser.js';
 import { detectPromptInjection } from './core/security.js';
 import { InvariantRule, AskRule, RuleType, Playbook, AGENTS_PREFERENCES_ID } from './core/schema.js';
 import { buildSynthesisPrompt, parseSynthesizedRule, SynthesizedRule } from './core/synthesizer.js';
@@ -844,7 +845,7 @@ export default function (pi: ExtensionAPI) {
   pi.on('session_start', async (_event: any, ctx: any) => {
     if (await storage.hasAgentPreferences()) {
       ctx.ui?.notify(
-        '[gentle-playbook] Agent Preferences active (Supervision & Governance loaded)',
+        '[gentle-playbook] Agent Preferences active (Supervision & Governance available via playbook_consult tool)',
         'info'
       );
     }
@@ -856,46 +857,93 @@ export default function (pi: ExtensionAPI) {
       const exists = await storage.exists(detectedLang);
       if (exists) {
         ctx.ui?.notify(
-          `[gentle-playbook] Active ${detectedLang.toUpperCase()} playbook loaded from ~/.config/gentle-playbook/languages/${detectedLang}.md`,
+          `[gentle-playbook] Active ${detectedLang.toUpperCase()} playbook available via playbook_consult tool`,
           'info'
         );
       }
     }
   });
 
-  // 4. Runtime Invariant & Ask Enforcement via before_agent_start
-  pi.on('before_agent_start', async (event: any, ctx: any) => {
-    const promptParts: string[] = [];
+  // 4. Model-callable tool: playbook_consult (Option A: Role Tool on-demand data)
+  if (pi.registerTool) {
+    const PlaybookConsultParams = Type.Object({
+      language: Type.Optional(
+        Type.String({
+          description:
+            "Target language (e.g. 'go', 'typescript', 'python') or 'agents' for agent supervision preferences. Defaults to auto-detected workspace language.",
+        })
+      ),
+      surface: Type.Optional(
+        Type.String({
+          description:
+            "Optional filter for rules affecting a specific surface or file path (e.g. 'internal/ports', 'tools:write', 'git:push').",
+        })
+      ),
+    });
 
-    // 1. Cargar SIEMPRE Agents Preferences si existen
-    const agentPrefs = await storage.getAgentPreferences();
-    if (
-      agentPrefs &&
-      (agentPrefs.invariants.length > 0 ||
-        agentPrefs.askRules.length > 0 ||
-        (agentPrefs.neverRules && agentPrefs.neverRules.length > 0))
-    ) {
-      promptParts.push(formatAgentPreferencesForSystemPrompt(agentPrefs));
-    }
+    pi.registerTool({
+      name: 'playbook_consult',
+      label: 'Playbook Consult',
+      description:
+        'Consult architectural conventions, topology constraints, coding invariants, conditional asks, prohibitions, and agent supervision preferences for the project or language. Returns passive reference data without system prompt injection.',
+      parameters: PlaybookConsultParams,
+      async execute(_toolCallId: string, params: any, _signal: any, _onUpdate: any, ctx: any) {
+        const cwd = ctx?.cwd || process.cwd();
+        let targetLang = params?.language?.trim().toLowerCase();
+        const surfaceFilter = params?.surface?.trim();
 
-    // 2. Cargar Playbook del lenguaje si se detecta
-    const cwd = ctx.cwd || process.cwd();
-    const detectedLang = await detectProjectLanguage(cwd);
-    if (detectedLang && detectedLang !== 'generic') {
-      const pb = await storage.getPlaybook(detectedLang);
-      if (pb) {
-        promptParts.push(formatPlaybookForSystemPrompt(pb));
-      }
-    }
+        const results: string[] = [];
 
-    if (promptParts.length === 0) return;
+        if (targetLang === 'agents' || targetLang === AGENTS_PREFERENCES_ID) {
+          const agentPrefs = await storage.getAgentPreferences();
+          if (agentPrefs) {
+            results.push(formatAgentPreferencesForTool(agentPrefs, surfaceFilter));
+          } else {
+            results.push('No agent supervision preferences found in storage.');
+          }
+        } else if (targetLang) {
+          const resolved = resolveLanguage(targetLang);
+          const pb = await storage.getPlaybook(resolved);
+          if (pb) {
+            results.push(formatPlaybookForTool(pb, surfaceFilter));
+          } else {
+            results.push(`No playbook found for language '${targetLang}'.`);
+          }
+        } else {
+          // Auto-detect project language and include agent preferences if present
+          const detected = await detectProjectLanguage(cwd);
+          let foundAny = false;
 
-    const fullPrompt = promptParts.join('\n\n---\n\n');
-    if (event.systemPromptOptions?.sections) {
-      event.systemPromptOptions.sections['gentle_playbook'] = fullPrompt;
-    } else if (event.systemPromptOptions) {
-      event.systemPromptOptions.appendSystemPrompt =
-        (event.systemPromptOptions.appendSystemPrompt || '') + '\n\n' + fullPrompt;
-    }
-  });
+          if (detected && detected !== 'generic') {
+            const pb = await storage.getPlaybook(detected);
+            if (pb) {
+              results.push(formatPlaybookForTool(pb, surfaceFilter));
+              foundAny = true;
+            }
+          }
+
+          const agentPrefs = await storage.getAgentPreferences();
+          if (
+            agentPrefs &&
+            (agentPrefs.invariants.length > 0 ||
+              agentPrefs.askRules.length > 0 ||
+              (agentPrefs.neverRules && agentPrefs.neverRules.length > 0))
+          ) {
+            results.push(formatAgentPreferencesForTool(agentPrefs, surfaceFilter));
+            foundAny = true;
+          }
+
+          if (!foundAny) {
+            results.push('No playbook found for the current workspace and no agent preferences configured.');
+          }
+        }
+
+        const text = results.join('\n\n---\n\n');
+        return {
+          content: [{ type: 'text', text }],
+          details: { language: targetLang, surface: surfaceFilter },
+        };
+      },
+    });
+  }
 }

@@ -33,7 +33,7 @@ describe('Gentle Playbook Extension Hooks', () => {
     await fs.rm(tempDir, { recursive: true, force: true });
   });
 
-  it('should inject agents-preferences into system prompt on before_agent_start', async () => {
+  it('should register playbook_consult tool and serve agent preferences without system prompt injection', async () => {
     const storage = new PlaybookStorage(tempDir);
     const agentPb: Playbook = {
       language: AGENTS_PREFERENCES_ID,
@@ -67,12 +67,16 @@ describe('Gentle Playbook Extension Hooks', () => {
 
     const commands: Record<string, any> = {};
     const listeners: Record<string, Function> = {};
+    const tools: Record<string, any> = {};
 
     const mockPi: ExtensionAPI = {
       registerCommand(name, options) {
         commands[name] = options;
       },
       sendMessage: vi.fn(),
+      registerTool(tool) {
+        tools[tool.name] = tool;
+      },
       on(event, handler) {
         listeners[event] = handler;
       },
@@ -82,27 +86,23 @@ describe('Gentle Playbook Extension Hooks', () => {
 
     expect(commands['gentle-playbook']).toBeDefined();
     expect(commands['gentle-playbook-add']).toBeDefined();
-    expect(listeners['before_agent_start']).toBeDefined();
+    // System prompt hook must be eliminated
+    expect(listeners['before_agent_start']).toBeUndefined();
 
-    // Trigger before_agent_start in a generic cwd (no language detected)
-    const event: any = {
-      systemPromptOptions: {
-        sections: {},
-      },
-    };
-    const ctx = { cwd: tempDir };
+    // Verify playbook_consult tool is registered
+    expect(tools['playbook_consult']).toBeDefined();
+    const tool = tools['playbook_consult'];
+    expect(tool.description).toContain('Consult architectural conventions');
 
-    await listeners['before_agent_start'](event, ctx);
-
-    const injected = event.systemPromptOptions.sections['gentle_playbook'];
-    expect(injected).toBeDefined();
-    expect(injected).toContain('AGENT SUPERVISION & OPERATIONAL BOUNDARIES');
-    expect(injected).toContain('require-write-approval');
-    expect(injected).toContain('tools:write,tools:edit');
-    expect(injected).toContain('¿Autorizas este comando destructivo?');
+    // Execute tool query
+    const res = await tool.execute('call-1', { language: 'agents' }, null, null, { cwd: tempDir });
+    expect(res.content[0].text).toContain('AGENT SUPERVISION & OPERATIONAL BOUNDARIES');
+    expect(res.content[0].text).toContain('require-write-approval');
+    expect(res.content[0].text).toContain('tools:write,tools:edit');
+    expect(res.content[0].text).toContain('¿Autorizas este comando destructivo?');
   });
 
-  it('should inject agents-preferences with neverRules into system prompt', async () => {
+  it('should serve agent preferences with neverRules via playbook_consult tool with surface filtering', async () => {
     const storage = new PlaybookStorage(tempDir);
     const agentPb: Playbook = {
       language: AGENTS_PREFERENCES_ID,
@@ -124,10 +124,14 @@ describe('Gentle Playbook Extension Hooks', () => {
     };
     await storage.saveAgentPreferences(agentPb);
 
+    const tools: Record<string, any> = {};
     const listeners: Record<string, Function> = {};
     const mockPi: ExtensionAPI = {
       registerCommand: vi.fn(),
       sendMessage: vi.fn(),
+      registerTool(tool) {
+        tools[tool.name] = tool;
+      },
       on(event, handler) {
         listeners[event] = handler;
       },
@@ -135,16 +139,19 @@ describe('Gentle Playbook Extension Hooks', () => {
 
     registerExtension(mockPi);
 
-    const event: any = { systemPromptOptions: { sections: {} } };
-    const ctx = { cwd: tempDir };
+    expect(listeners['before_agent_start']).toBeUndefined();
+    expect(tools['playbook_consult']).toBeDefined();
 
-    await listeners['before_agent_start'](event, ctx);
+    const tool = tools['playbook_consult'];
 
-    const injected = event.systemPromptOptions.sections['gentle_playbook'];
-    expect(injected).toBeDefined();
-    expect(injected).toContain('RESTRICTED ACTIONS');
-    expect(injected).toContain('no-push-to-main');
-    expect(injected).toContain('No hacer git push directo a la rama main o master');
+    // Test with matching surface filter
+    const resMatch = await tool.execute('call-2', { language: 'agents', surface: 'git:push' }, null, null, { cwd: tempDir });
+    expect(resMatch.content[0].text).toContain('RESTRICTED ACTIONS');
+    expect(resMatch.content[0].text).toContain('no-push-to-main');
+
+    // Test with non-matching surface filter
+    const resNoMatch = await tool.execute('call-3', { language: 'agents', surface: 'docker:build' }, null, null, { cwd: tempDir });
+    expect(resNoMatch.content[0].text).not.toContain('no-push-to-main');
   });
 
   it('should abort extract immediately with error notification when model is missing', async () => {
