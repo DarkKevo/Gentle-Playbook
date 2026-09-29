@@ -17,3 +17,4 @@ Check 1 requires decoupling the playbook from the system prompt:
 - [x] Task 5: Unify entry security policy across extract, manual Markdown parsing, and storage (Issue #10 - Check 2).
 - [x] Task 6: Implement wide-threshold chat hijacking defenses and tests for out-of-denylist wording (Issue #10 - Check 3).
 - [x] Task 7: Implement fail-safe confirmation contract on add and delete without UI confirm requiring --yes (Issue #10 - Check 4).
+- [x] Task 8: Preserve existing rule canonical identity on semantic diff merge during replacement of redundant rules (Issue #10 - Check 5).

@@ -339,11 +339,16 @@ export function mergePlaybooks(
       }
 
       if (res && res.action === 'accept') {
-        // Explicitly approved replacement
+        // Explicitly approved replacement: preserve the existing rule's canonical ID
+        const canonicalId = invDiff.existing?.id || invDiff.incoming.id;
+        const updatedRule: InvariantRule = {
+          ...invDiff.incoming,
+          id: canonicalId,
+        };
         if (idx >= 0) {
-          mergedInvariants[idx] = invDiff.incoming;
+          mergedInvariants[idx] = updatedRule;
         } else {
-          mergedInvariants.push(invDiff.incoming);
+          mergedInvariants.push(updatedRule);
         }
       } else if (res && res.action === 'convert_to_ask') {
         // Remove from invariants, add to askRules
@@ -407,10 +412,16 @@ export function mergePlaybooks(
       }
 
       if (res && res.action === 'accept') {
+        // Explicitly approved replacement: preserve the existing rule's canonical ID
+        const canonicalId = askDiff.existing?.id || askDiff.incoming.id;
+        const updatedRule: AskRule = {
+          ...askDiff.incoming,
+          id: canonicalId,
+        };
         if (idx >= 0) {
-          mergedAskRules[idx] = askDiff.incoming;
+          mergedAskRules[idx] = updatedRule;
         } else {
-          mergedAskRules.push(askDiff.incoming);
+          mergedAskRules.push(updatedRule);
         }
       } else if (res && res.action === 'convert_to_invariant') {
         if (idx >= 0) mergedAskRules.splice(idx, 1);
@@ -456,10 +467,15 @@ export function mergePlaybooks(
       }
 
       if (res && res.action === 'accept') {
+        const canonicalId = snipDiff.existing?.id || snipDiff.incoming.id;
+        const updatedSnippet: Snippet = {
+          ...snipDiff.incoming,
+          id: canonicalId,
+        };
         if (idx >= 0) {
-          mergedSnippets[idx] = snipDiff.incoming;
+          mergedSnippets[idx] = updatedSnippet;
         } else {
-          mergedSnippets.push(snipDiff.incoming);
+          mergedSnippets.push(updatedSnippet);
         }
       }
       // Safety by default: si no hay 'accept' explícito, preservar el snippet existente
@@ -481,10 +497,15 @@ export function mergePlaybooks(
       }
 
       if (res && res.action === 'accept') {
+        const canonicalId = nevDiff.existing?.id || nevDiff.incoming.id;
+        const updatedNever: NeverRule = {
+          ...nevDiff.incoming,
+          id: canonicalId,
+        };
         if (idx >= 0) {
-          mergedNeverRules[idx] = nevDiff.incoming;
+          mergedNeverRules[idx] = updatedNever;
         } else {
-          mergedNeverRules.push(nevDiff.incoming);
+          mergedNeverRules.push(updatedNever);
         }
       } else if (res && res.action === 'custom_edit') {
         const editedRule: NeverRule = {
