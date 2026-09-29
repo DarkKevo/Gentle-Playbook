@@ -1,5 +1,6 @@
 import { Playbook } from '../core/schema.js';
 import { parsePlaybook } from '../core/parser.js';
+import { filterPlaybookRules } from '../core/security.js';
 import { detectTopology } from './topology.js';
 import { detectProjectLanguage } from './extractor.js';
 import { buildAgentExtractorPrompt } from './prompt.js';
@@ -48,10 +49,13 @@ export function parseAgentOutput(rawOutput: string, defaultLang: string): AgentE
     playbook.language = defaultLang;
   }
 
+  // Uniform entry security: filter out rules that fail security checks
+  const { playbook: safePlaybook } = filterPlaybookRules(playbook);
+
   return {
     evidenceReport,
     playbookMarkdown,
-    playbook,
+    playbook: safePlaybook,
   };
 }
 

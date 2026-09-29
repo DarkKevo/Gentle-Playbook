@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { Playbook, AGENTS_PREFERENCES_ID } from './schema.js';
 import { parsePlaybook, serializePlaybook } from './parser.js';
+import { filterPlaybookRules } from './security.js';
 import { resolveLanguage } from './languages.js';
 
 export class PlaybookStorage {
@@ -87,8 +88,9 @@ export class PlaybookStorage {
 
   async savePlaybook(playbook: Playbook): Promise<void> {
     await this.ensureDir();
-    const filePath = this.getFilePath(playbook.language);
-    const markdown = serializePlaybook(playbook);
+    const { playbook: safePlaybook } = filterPlaybookRules(playbook);
+    const filePath = this.getFilePath(safePlaybook.language);
+    const markdown = serializePlaybook(safePlaybook);
     await fs.writeFile(filePath, markdown, 'utf-8');
   }
 

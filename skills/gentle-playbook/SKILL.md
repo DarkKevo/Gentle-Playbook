@@ -35,8 +35,11 @@ Every developer has an architectural "essence" for each programming language (e.
 ## Commands & Operations
 
 ### Inspecting Active Playbook
-When working in a project with an active language (e.g. `go.mod`), inspect `~/.config/gentle-playbook/languages/<language>.md`. Read the topology and invariants before planning or creating files.
+When working in a project with an active language (e.g. `go.mod`), inspect rules on-demand by calling the `playbook_consult` tool (or inspecting `~/.config/gentle-playbook/languages/<language>.md`). Consult topology, invariants, and agent rules before planning or creating files.
 If `agents-preferences.md` exists, its rules supervise and delimit agent tool execution across all projects.
+
+Model Tool:
+- `playbook_consult`: Call with optional `language` (e.g. `'go'`, `'agents'`) or `surface` (e.g. `'internal/ports'`, `'tools:write'`, `'git:push'`) to retrieve rules on-demand without system prompt bloat.
 
 Interactive commands in Pi:
 - `/playbook` or `/gentle-playbook`: Interactive selector and detailed inventory of active playbooks.

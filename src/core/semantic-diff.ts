@@ -89,13 +89,14 @@ export function parseSemanticDiffResponse(raw: string): SemanticDiffResponse | n
 }
 
 /**
- * CANONICAL RULE IDENTITY CONTRACT (Issue #7):
+ * CANONICAL RULE IDENTITY CONTRACT (Issue #7 & Issue #10):
  * 1. Rule identity is strictly defined by the rule's canonical `id`.
  * 2. Two rules with different IDs are separate entities; the LLM does not redefine identity.
  * 3. Matching between draft rules and existing rules is strictly deterministic by ID.
  *    Fuzzy matching by title or substring is forbidden to prevent divergent behavior.
- * 4. The LLM acts solely as a semantic advisor, detecting conceptual redundancies
- *    and conflicts that the user must explicitly arbitrate.
+ * 4. Conceptual collisions or redundancies detected by the LLM across different IDs
+ *    must preserve the existing rule's canonical `id` during arbitration and merge,
+ *    preventing the erasure or corruption of existing rule identities.
  */
 function findExistingRule<T extends { id: string }>(
   list: T[],

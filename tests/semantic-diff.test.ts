@@ -200,7 +200,8 @@ describe('Semantic Playbook Diff & AI Resolution', () => {
     }, diff);
 
     expect(merged.invariants).toHaveLength(1);
-    expect(merged.invariants[0].id).toBe('b6-interfaces-any');
+    // Preserves the existing canonical rule ID instead of replacing it with the draft's ephemeral ID
+    expect(merged.invariants[0].id).toBe('no-any-interfaces');
     expect(merged.invariants[0].description).toContain('interfaces Any');
   });
 
