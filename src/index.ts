@@ -8,8 +8,9 @@ import { computePlaybookDiff, mergePlaybooks, RuleResolution, PlaybookDiffResult
 import { computeSemanticPlaybookDiff, resolveConflictWithAI } from './core/semantic-diff.js';
 import { formatPlaybookForDisplay, formatPlaybookForTool, formatAgentPreferencesForTool } from './core/parser.js';
 import { detectPromptInjection } from './core/security.js';
-import { InvariantRule, AskRule, RuleType, Playbook, AGENTS_PREFERENCES_ID } from './core/schema.js';
-import { buildSynthesisPrompt, parseSynthesizedRule, SynthesizedRule } from './core/synthesizer.js';
+import { InvariantRule, AskRule, NeverRule, RuleType, Playbook, AGENTS_PREFERENCES_ID } from './core/schema.js';
+import { buildSynthesisPrompt, parseSynthesizedRule, SynthesizedRule, isProhibitionDescription, ProhibitionScope } from './core/synthesizer.js';
+import { checkPromptViolation, checkPathViolation, evaluatePromptSemantically } from './core/checker.js';
 import { getLanguageMenuLabels, resolveLanguage } from './core/languages.js';
 
 export interface ExtensionAPI {
@@ -22,7 +23,7 @@ export interface ExtensionAPI {
   ): void;
   sendMessage(message: any, options?: any): void;
   registerTool?(tool: any): void;
-  on(event: string, handler: (event: any, ctx: any) => Promise<void>): void;
+  on(event: string, handler: (event: any, ctx: any) => Promise<any>): void;
 }
 
 async function handleAddRule(
@@ -101,18 +102,37 @@ async function handleAddRule(
     return;
   }
 
-  // 3. Selection of Rule Type: Normativa vs Ask
+  // 3. Selection of Rule Type: Normativa vs Ask vs Prohibición (Never)
   let ruleType: RuleType = 'invariant';
+  const looksLikeProhibition = isProhibitionDescription(rawDescription.trim());
+
   if (ctx.ui?.select) {
-    const typeOptions = isAgent
-      ? [
-          '🛡️ Normativa (Límite operativo no negociable / Restricción estricta)',
-          '💡 Ask (Punto de control / Preguntar al usuario antes de actuar)',
-        ]
-      : [
-          '🛡️ Normativa (Invariante no negociable)',
-          '💡 Ask (Patrón condicional / Receta con pregunta)',
-        ];
+    let typeOptions: string[];
+    if (isAgent) {
+      typeOptions = looksLikeProhibition
+        ? [
+            '🚫 Prohibición / Never (Restricción terminante / Acción vetada)',
+            '🛡️ Normativa (Límite operativo no negociable / Restricción estricta)',
+            '💡 Ask (Punto de control / Preguntar al usuario antes de actuar)',
+          ]
+        : [
+            '🛡️ Normativa (Límite operativo no negociable / Restricción estricta)',
+            '💡 Ask (Punto de control / Preguntar al usuario antes de actuar)',
+            '🚫 Prohibición / Never (Restricción terminante / Acción vetada)',
+          ];
+    } else {
+      typeOptions = looksLikeProhibition
+        ? [
+            '🚫 Prohibición / Never (Restricción de no hacer o vetar tecnología/patrón)',
+            '🛡️ Normativa (Invariante no negociable)',
+            '💡 Ask (Patrón condicional / Receta con pregunta)',
+          ]
+        : [
+            '🛡️ Normativa (Invariante no negociable)',
+            '💡 Ask (Patrón condicional / Receta con pregunta)',
+            '🚫 Prohibición / Never (Restricción de no hacer o vetar tecnología/patrón)',
+          ];
+    }
 
     const typeChoice = await ctx.ui.select(
       isAgent ? '¿Qué tipo de regla de supervisión es?' : '¿Qué tipo de regla es?',
@@ -121,6 +141,48 @@ async function handleAddRule(
     if (!typeChoice) return;
     if (typeChoice.includes('Ask')) {
       ruleType = 'ask';
+    } else if (typeChoice.includes('Prohibición') || typeChoice.includes('Never')) {
+      ruleType = 'never';
+    }
+  } else if (looksLikeProhibition) {
+    ruleType = 'never';
+  }
+
+  // Si es una prohibición (Never), consultar el alcance en TUI
+  let prohibitionScope: ProhibitionScope = 'specific';
+  let customScopeText: string | undefined;
+
+  if (ruleType === 'never' && ctx.ui?.select) {
+    const scopeChoice = await ctx.ui.select(
+      '¿Qué alcance debe tener esta prohibición?',
+      [
+        '🎯 1. Específica: Solo este elemento/librería puntual (ej: únicamente "Gin")',
+        '🌐 2. Categórica / Familia: Este elemento y cualquier alternativa similar (ej: Gin y cualquier router externo; usar solo stdlib)',
+        '✍️ 3. Definir alcance personalizado: (especificar excepciones, condiciones o límites)',
+      ]
+    );
+    if (!scopeChoice) return;
+
+    if (scopeChoice.includes('1. Específica')) {
+      prohibitionScope = 'specific';
+    } else if (scopeChoice.includes('2. Categórica')) {
+      prohibitionScope = 'categorical';
+    } else if (scopeChoice.includes('3. Definir alcance')) {
+      prohibitionScope = 'custom';
+      if (ctx.ui?.input) {
+        const customInput = await ctx.ui.input(
+          'Escribe el alcance detallado de la prohibición (límites o excepciones permitidas):',
+          'Ej: prohibir todos los routers de terceros salvo net/http estándar'
+        );
+        if (customInput && customInput.trim()) {
+          const check = detectPromptInjection(customInput.trim());
+          if (check.isSuspicious) {
+            ctx.ui?.notify(`❌ Alcance rechazado: patrón sospechoso detectado (${check.reason}).`, 'error');
+            return;
+          }
+          customScopeText = customInput.trim();
+        }
+      }
     }
   }
 
@@ -129,7 +191,10 @@ async function handleAddRule(
 
   let synthesized: SynthesizedRule;
   try {
-    const prompt = buildSynthesisPrompt(targetLang, rawDescription.trim(), ruleType);
+    const prompt = buildSynthesisPrompt(targetLang, rawDescription.trim(), ruleType, {
+      prohibitionScope,
+      customScopeText,
+    });
     let rawResponse = '';
 
     if (ctx.modelRegistry && ctx.model) {
@@ -148,12 +213,13 @@ async function handleAddRule(
         type: ruleType,
         id: rawDescription.toLowerCase().replace(/[^a-z0-9]/g, '-').slice(0, 24),
         title: rawDescription.slice(0, 45),
-        surface: isAgent ? 'tools:all' : 'src/',
+        surface: isAgent ? 'tools:all' : (ruleType === 'never' ? 'dependencies' : 'src/'),
         description: rawDescription.trim(),
         trigger: isAgent ? 'Al intentar ejecutar acciones en esta superficie' : 'Al implementar esta funcionalidad',
         antiTrigger: isAgent ? 'En tareas de solo lectura' : 'En contextos no aplicables',
         prompt: `¿Deseas proceder con ${rawDescription.slice(0, 30)}?`,
         defaultAction: isAgent ? 'Detener la acción y pedir instrucciones' : 'Continuar sin esta regla',
+        reason: 'Restricción obligatoria del usuario',
       };
     } else {
       synthesized = parseSynthesizedRule(rawResponse, ruleType, targetLang);
@@ -167,8 +233,10 @@ async function handleAddRule(
   let preview = '';
   if (synthesized.type === 'invariant') {
     preview = `Título: [NORMATIVA] ${synthesized.title}\nSurface: ${synthesized.surface}\nRegla: ${synthesized.description}`;
-  } else {
+  } else if (synthesized.type === 'ask') {
     preview = `Título: [ASK] ${synthesized.title}\nSurface: ${synthesized.surface}\nTrigger: ${synthesized.trigger}\nAnti-Trigger: ${synthesized.antiTrigger}\nPregunta: "${synthesized.prompt}"\nDefault: ${synthesized.defaultAction}`;
+  } else {
+    preview = `Título: [NUNCA/PROHIBICIÓN] ${synthesized.title}\nSurface: ${synthesized.surface}\nProhibición: ${synthesized.description}\nMotivo: ${synthesized.reason || 'Restricción arquitectónica obligatoria'}`;
   }
 
   // Confirm dialog or fail-safe without UI
@@ -222,6 +290,19 @@ async function handleAddRule(
     };
     if (idx >= 0) pb.invariants[idx] = newInv;
     else pb.invariants.push(newInv);
+  } else if (synthesized.type === 'never') {
+    if (!pb.neverRules) pb.neverRules = [];
+    const idx = pb.neverRules.findIndex((n) => n.id === synthesized.id);
+    const newNever: NeverRule = {
+      id: synthesized.id,
+      type: 'never',
+      title: synthesized.title,
+      surface: synthesized.surface,
+      description: synthesized.description,
+      reason: synthesized.reason || '',
+    };
+    if (idx >= 0) pb.neverRules[idx] = newNever;
+    else pb.neverRules.push(newNever);
   } else {
     const idx = pb.askRules.findIndex((a) => a.id === synthesized.id);
     const newAsk: AskRule = {
@@ -892,7 +973,34 @@ export default function (pi: ExtensionAPI) {
     }
   });
 
-  // 4. Model-callable tool: playbook_consult (Option A: Role Tool on-demand data)
+  // 4. Light runtime directive via before_agent_start (Eje 4: Puntero ligero on-demand)
+  pi.on('before_agent_start', async (event: any, ctx: any) => {
+    const cwd = ctx?.cwd || process.cwd();
+    const detectedLang = await detectProjectLanguage(cwd);
+    const hasLangPlaybook =
+      detectedLang && detectedLang !== 'generic' && (await storage.exists(detectedLang));
+    const hasAgentPrefs = await storage.hasAgentPreferences();
+
+    if (!hasLangPlaybook && !hasAgentPrefs) return;
+
+    if (!event.systemPromptOptions) {
+      event.systemPromptOptions = { sections: {} };
+    }
+    if (!event.systemPromptOptions.sections) {
+      event.systemPromptOptions.sections = {};
+    }
+
+    const targets: string[] = [];
+    if (hasLangPlaybook) targets.push(`playbook de ${detectedLang.toUpperCase()}`);
+    if (hasAgentPrefs) targets.push('preferencias de gobernanza de agente');
+
+    event.systemPromptOptions.sections.playbook_guidance =
+      `[gentle-playbook] Este workspace cuenta con normas activas (${targets.join(', ')}). ` +
+      `Antes de estructurar, planificar, generar o modificar código o ejecutar acciones operativas en este proyecto, ` +
+      `debes consultar la herramienta \`playbook_consult\` para conocer la topología, invariantes, estándares y prohibiciones vinculantes del repositorio.`;
+  });
+
+  // 5. Model-callable tool: playbook_consult (Option A: Role Tool on-demand data)
   if (pi.registerTool) {
     const PlaybookConsultParams = Type.Object({
       language: Type.Optional(
@@ -974,4 +1082,144 @@ export default function (pi: ExtensionAPI) {
       },
     });
   }
+
+  // 5. Pre-flight prompt inspection (Eje 1: Pre-vuelo)
+  pi.on('input', async (event: any, ctx: any) => {
+    try {
+      if (!event || event.source === 'extension') {
+        return { action: 'continue' };
+      }
+
+      const promptText = typeof event.text === 'string' ? event.text : '';
+      if (!promptText.trim()) {
+        return { action: 'continue' };
+      }
+
+      const cwd = ctx?.cwd || process.cwd();
+      const detectedLang = await detectProjectLanguage(cwd);
+      const playbooksToCheck: Playbook[] = [];
+
+      if (detectedLang && detectedLang !== 'generic') {
+        const activePb = await storage.getPlaybook(detectedLang);
+        if (activePb) playbooksToCheck.push(activePb);
+      }
+
+      const agentPrefs = await storage.getAgentPreferences();
+      if (agentPrefs) playbooksToCheck.push(agentPrefs);
+
+      if (playbooksToCheck.length === 0) return { action: 'continue' };
+
+      // Si hay modelo disponible en Pi, usamos el Agente para la evaluación semántica real
+      let completePrompt: ((prompt: string) => Promise<string>) | undefined;
+      if (ctx?.modelRegistry && ctx?.model) {
+        completePrompt = async (p: string) => {
+          const completion = await ctx.modelRegistry.complete(ctx.model, {
+            messages: [{ role: 'user', content: p }],
+          });
+          return (
+            completion?.content
+              ?.filter((c: any) => c.type === 'text')
+              .map((c: any) => c.text || '')
+              .join('') || ''
+          );
+        };
+      }
+
+      for (const pb of playbooksToCheck) {
+        let violation = null;
+        if (completePrompt) {
+          try {
+            violation = await evaluatePromptSemantically(promptText, pb, completePrompt);
+          } catch {
+            violation = checkPromptViolation(promptText, pb);
+          }
+        } else {
+          violation = checkPromptViolation(promptText, pb);
+        }
+
+        if (violation) {
+          if (ctx.ui?.confirm) {
+            const pbName = pb.language === AGENTS_PREFERENCES_ID ? 'Agents Preferences' : pb.language.toUpperCase();
+            const confirmed = await ctx.ui.confirm(
+              '⚠️ Conflicto con Playbook',
+              `Esta acción entra en conflicto con ${pbName}:\n\n` +
+                `Regla [${violation.rule.id.toUpperCase()}]: ${violation.rule.description}\n` +
+                `Motivo: ${violation.reason}\n\n` +
+                `¿Deseas continuar permitiendo esta excepción?`
+            );
+
+            if (!confirmed) {
+              ctx.ui?.notify('Acción cancelada para respetar el playbook.', 'info');
+              return { action: 'handled' };
+            }
+          }
+        }
+      }
+
+      return { action: 'continue' };
+    } catch {
+      return { action: 'continue' };
+    }
+  });
+
+  // 6. Write/Edit Path Enforcement Barrier (Eje 1: Barrera tool_call)
+  pi.on('tool_call', async (event: any, ctx: any) => {
+    try {
+      if (!event || (event.toolName !== 'write' && event.toolName !== 'edit')) {
+        return undefined;
+      }
+
+      const targetPath = typeof event.input?.path === 'string' ? event.input.path : '';
+      if (!targetPath.trim()) return undefined;
+
+      const cwd = ctx?.cwd || process.cwd();
+      const detectedLang = await detectProjectLanguage(cwd);
+      const playbooksToCheck: Playbook[] = [];
+
+      if (detectedLang && detectedLang !== 'generic') {
+        const activePb = await storage.getPlaybook(detectedLang);
+        if (activePb) playbooksToCheck.push(activePb);
+      }
+
+      const agentPrefs = await storage.getAgentPreferences();
+      if (agentPrefs) playbooksToCheck.push(agentPrefs);
+
+      if (playbooksToCheck.length === 0) return undefined;
+
+      for (const pb of playbooksToCheck) {
+        const pathViolation = checkPathViolation(targetPath, pb, cwd);
+        if (pathViolation) {
+          const pbName = pb.language === AGENTS_PREFERENCES_ID ? 'Agents Preferences' : pb.language.toUpperCase();
+          if (ctx.ui?.confirm) {
+            const confirmed = await ctx.ui.confirm(
+              '⚠️ Violación de Playbook',
+              `El agente intenta modificar una ruta que viola ${pbName}:\n\n` +
+                `Regla [${pathViolation.rule.id.toUpperCase()}]: ${pathViolation.rule.description}\n` +
+                `Ruta: ${targetPath}\n` +
+                `Motivo: ${pathViolation.reason}\n\n` +
+                `¿Deseas autorizar la escritura en esta ruta de todas formas?`
+            );
+
+            if (!confirmed) {
+              ctx.ui?.notify(`Escritura en "${targetPath}" bloqueada para respetar el playbook.`, 'warning');
+              return {
+                block: true,
+                reason: `Operación bloqueada por el usuario para respetar la regla [${pathViolation.rule.id.toUpperCase()}]: ${pathViolation.rule.description}`,
+              };
+            }
+          } else {
+            // Fail-safe en entornos headless/desatendidos
+            return {
+              block: true,
+              reason: `Operación bloqueada: la ruta "${targetPath}" viola la regla [${pathViolation.rule.id.toUpperCase()}]: ${pathViolation.rule.description}`,
+            };
+          }
+        }
+      }
+
+      return undefined;
+    } catch {
+      return undefined;
+    }
+  });
 }

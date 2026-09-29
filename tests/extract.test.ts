@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { detectProjectLanguage, extractPlaybook } from '../src/extract/extractor.js';
@@ -9,6 +9,20 @@ const __dirname = path.dirname(__filename);
 const fixturePath = path.join(__dirname, 'fixtures', 'go-hexagonal');
 
 describe('Extraction Engine with Local Fixture', () => {
+  let originalCodegraphBin: string | undefined;
+
+  beforeEach(() => {
+    originalCodegraphBin = process.env.CODEGRAPH_BIN;
+    process.env.CODEGRAPH_BIN = '/bin/non-existent-codegraph-bin';
+  });
+
+  afterEach(() => {
+    if (originalCodegraphBin !== undefined) {
+      process.env.CODEGRAPH_BIN = originalCodegraphBin;
+    } else {
+      delete process.env.CODEGRAPH_BIN;
+    }
+  });
   it('should detect Go language from fixture repository root', async () => {
     const lang = await detectProjectLanguage(fixturePath);
     expect(lang).toBe('go');

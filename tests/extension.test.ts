@@ -86,8 +86,14 @@ describe('Gentle Playbook Extension Hooks', () => {
 
     expect(commands['gentle-playbook']).toBeDefined();
     expect(commands['gentle-playbook-add']).toBeDefined();
-    // System prompt hook must be eliminated
-    expect(listeners['before_agent_start']).toBeUndefined();
+    // Verify lightweight guidance pointer is registered in before_agent_start (Eje 4)
+    expect(listeners['before_agent_start']).toBeDefined();
+    const event = { systemPromptOptions: { sections: {} as Record<string, string> } };
+    await listeners['before_agent_start'](event, { cwd: tempDir });
+    expect(event.systemPromptOptions.sections.playbook_guidance).toContain('playbook_consult');
+    // Ensures zero raw playbook markdown or XML data is injected into system prompt
+    expect(event.systemPromptOptions.sections.playbook_guidance).not.toContain('<agent_supervision_context>');
+    expect(event.systemPromptOptions.sections.playbook_guidance).not.toContain('<architectural_reference_context>');
 
     // Verify playbook_consult tool is registered
     expect(tools['playbook_consult']).toBeDefined();
@@ -139,7 +145,7 @@ describe('Gentle Playbook Extension Hooks', () => {
 
     registerExtension(mockPi);
 
-    expect(listeners['before_agent_start']).toBeUndefined();
+    expect(listeners['before_agent_start']).toBeDefined();
     expect(tools['playbook_consult']).toBeDefined();
 
     const tool = tools['playbook_consult'];
@@ -922,6 +928,184 @@ extracted: 2026-03-30
 
       const pb = await storage.getPlaybook('go');
       expect(pb?.invariants.some((i) => i.id === 'rule-to-delete')).toBe(false);
+    });
+  });
+
+  describe('Pre-flight Input and Tool Call Violation Enforcement', () => {
+    let storage: PlaybookStorage;
+    let commands: Record<string, any>;
+    let listeners: Record<string, Function>;
+
+    beforeEach(async () => {
+      storage = new PlaybookStorage(tempDir);
+      // Create Go project manifest so detectProjectLanguage(tempDir) returns 'go'
+      await fs.writeFile(path.join(tempDir, 'go.mod'), 'module test/app\n\ngo 1.22\n');
+
+      const goPlaybook: Playbook = {
+        language: 'go',
+        version: 1,
+        updatedAt: '2026-09-28',
+        topology: { pattern: 'Hexagonal', directories: ['internal/ports/httpserver/'] },
+        invariants: [
+          {
+            id: 'http-handlers-ports',
+            type: 'invariant',
+            title: 'Handlers HTTP en ports',
+            surface: 'internal/ports/httpserver/',
+            description: 'Los handlers HTTP viven exclusivamente en internal/ports/httpserver/. No crear handlers en main.go ni en pkg/.',
+          },
+        ],
+        askRules: [],
+        neverRules: [
+          {
+            id: 'no-gin',
+            type: 'never',
+            title: 'No usar Gin',
+            surface: 'dependencies',
+            description: 'No usar el framework Gin; usar net/http de la biblioteca estándar.',
+          },
+        ],
+        snippets: [],
+      };
+      await storage.savePlaybook(goPlaybook);
+
+      commands = {};
+      listeners = {};
+
+      const fakePi: ExtensionAPI = {
+        registerCommand(name, opts) {
+          commands[name] = opts;
+        },
+        sendMessage: vi.fn(),
+        registerTool: vi.fn(),
+        on(event, handler) {
+          listeners[event] = handler;
+        },
+      };
+
+      registerExtension(fakePi);
+    });
+
+    it('should intercept conflicting input and cancel when user declines exception', async () => {
+      const confirmMock = vi.fn().mockResolvedValue(false);
+      const notifyMock = vi.fn();
+
+      const ctx = {
+        cwd: tempDir,
+        ui: {
+          confirm: confirmMock,
+          notify: notifyMock,
+        },
+      };
+
+      const result = await listeners['input'](
+        { text: 'creame un servidor usando el framework Gin' },
+        ctx
+      );
+
+      expect(confirmMock).toHaveBeenCalledTimes(1);
+      expect(confirmMock).toHaveBeenCalledWith(
+        expect.stringContaining('Conflicto con Playbook'),
+        expect.stringContaining('NO-GIN')
+      );
+      expect(result).toEqual({ action: 'handled' });
+      expect(notifyMock).toHaveBeenCalledWith(
+        expect.stringContaining('Acción cancelada'),
+        'info'
+      );
+    });
+
+    it('should allow input through when user accepts exception', async () => {
+      const confirmMock = vi.fn().mockResolvedValue(true);
+      const notifyMock = vi.fn();
+
+      const ctx = {
+        cwd: tempDir,
+        ui: {
+          confirm: confirmMock,
+          notify: notifyMock,
+        },
+      };
+
+      const result = await listeners['input'](
+        { text: 'creame un servidor usando Gin para este test' },
+        ctx
+      );
+
+      expect(confirmMock).toHaveBeenCalledTimes(1);
+      expect(result).toEqual({ action: 'continue' });
+    });
+
+    it('should pass neutral input without triggering confirmation dialog', async () => {
+      const confirmMock = vi.fn();
+      const ctx = {
+        cwd: tempDir,
+        ui: { confirm: confirmMock },
+      };
+
+      const result = await listeners['input'](
+        { text: 'creame un endpoint /health con net/http' },
+        ctx
+      );
+
+      expect(confirmMock).not.toHaveBeenCalled();
+      expect(result).toEqual({ action: 'continue' });
+    });
+
+    it('should block write tool_call when path violates invariant and user rejects', async () => {
+      const confirmMock = vi.fn().mockResolvedValue(false);
+      const notifyMock = vi.fn();
+
+      const ctx = {
+        cwd: tempDir,
+        ui: {
+          confirm: confirmMock,
+          notify: notifyMock,
+        },
+      };
+
+      const result = await listeners['tool_call'](
+        {
+          toolName: 'write',
+          input: { path: 'pkg/handlers/health.go', content: 'package handlers' },
+        },
+        ctx
+      );
+
+      expect(confirmMock).toHaveBeenCalledWith(
+        expect.stringContaining('Violación de Playbook'),
+        expect.stringContaining('pkg/handlers/health.go')
+      );
+      expect(result).toEqual({
+        block: true,
+        reason: expect.stringContaining('HTTP-HANDLERS-PORTS'),
+      });
+      expect(notifyMock).toHaveBeenCalledWith(
+        expect.stringContaining('bloqueada'),
+        'warning'
+      );
+    });
+
+    it('should allow write tool_call when target path conforms to invariant', async () => {
+      const confirmMock = vi.fn();
+      const ctx = {
+        cwd: tempDir,
+        ui: { confirm: confirmMock },
+      };
+
+      const result = await listeners['tool_call'](
+        {
+          toolName: 'write',
+          input: {
+            path: 'internal/ports/httpserver/health.go',
+            content: 'package httpserver',
+          },
+        },
+        ctx
+      );
+
+      expect(confirmMock).not.toHaveBeenCalled();
+      expect(result).toBeUndefined();
     });
   });
 });

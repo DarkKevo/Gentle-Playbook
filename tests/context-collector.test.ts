@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
@@ -11,11 +11,28 @@ const __dirname = path.dirname(__filename);
 const fixturePath = path.join(__dirname, 'fixtures', 'go-hexagonal');
 
 describe('Project Context Collector (CodeGraph & Native Fallback)', () => {
+  let originalCodegraphBin: string | undefined;
+
+  beforeEach(() => {
+    originalCodegraphBin = process.env.CODEGRAPH_BIN;
+    process.env.CODEGRAPH_BIN = '/bin/non-existent-codegraph-bin';
+  });
+
+  afterEach(() => {
+    if (originalCodegraphBin !== undefined) {
+      process.env.CODEGRAPH_BIN = originalCodegraphBin;
+    } else {
+      delete process.env.CODEGRAPH_BIN;
+    }
+  });
+
   it('should collect context from fixture repository (manifests and file tree)', async () => {
     const context = await collectProjectContext(fixturePath, 'go', {
+      codeGraph: new CodeGraphWrapper('/bin/non-existent-codegraph-bin'),
       maxFilesToRead: 3,
     });
 
+    expect(context.usedCodeGraph).toBe(false);
     expect(context.manifests.length).toBeGreaterThan(0);
     expect(context.manifests.some((m) => m.file === 'go.mod')).toBe(true);
 
@@ -29,9 +46,11 @@ describe('Project Context Collector (CodeGraph & Native Fallback)', () => {
 
   it('should include code snippets with line numbers', async () => {
     const context = await collectProjectContext(fixturePath, 'go', {
+      codeGraph: new CodeGraphWrapper('/bin/non-existent-codegraph-bin'),
       maxFilesToRead: 2,
     });
 
+    expect(context.usedCodeGraph).toBe(false);
     expect(context.codeSnippets.length).toBeGreaterThan(0);
     expect(context.formattedContext).toContain('MUESTRAS DE CÓDIGO FUENTE REAL');
     // Ensure line numbers format: "1 | ..."
@@ -47,6 +66,39 @@ describe('Project Context Collector (CodeGraph & Native Fallback)', () => {
     expect(context.usedCodeGraph).toBe(false);
     expect(context.fileList.length).toBeGreaterThan(0);
     expect(context.formattedContext).toContain('Inspección Estructural de Archivos');
+  });
+
+  it('should format context using CodeGraph symbols when CodeGraph is available', async () => {
+    const mockCg = {
+      isAvailable: async () => true,
+      ensureIndex: async () => {},
+      query: async () => [
+        {
+          node: {
+            id: 'node-1',
+            kind: 'function',
+            name: 'Sanitize',
+            qualifiedName: 'adapters.Sanitize',
+            filePath: 'internal/adapters/sanitizer.go',
+            language: 'go',
+            startLine: 1,
+            endLine: 20,
+          },
+        },
+      ],
+    } as unknown as CodeGraphWrapper;
+
+    const context = await collectProjectContext(fixturePath, 'go', {
+      codeGraph: mockCg,
+      maxFilesToRead: 2,
+    });
+
+    expect(context.usedCodeGraph).toBe(true);
+    expect(context.fileList).toContain('internal/adapters/sanitizer.go');
+    expect(context.symbolsSummary).toContain('adapters.Sanitize');
+    expect(context.formattedContext).toContain('Indexado y Analizado con CodeGraph');
+    expect(context.formattedContext).toContain('MAPA DE SÍMBOLOS Y DEFINICIONES (CodeGraph Index)');
+    expect(context.formattedContext).toContain('adapters.Sanitize');
   });
 
   it('should handle repository without supported code files or manifests without crashing', async () => {
