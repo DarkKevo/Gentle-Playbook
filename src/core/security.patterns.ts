@@ -60,7 +60,15 @@ export const INJECTION_PATTERNS: Record<string, RegExp[]> = {
     /\bcopy (and paste|exactly|verbatim|the following)\b/i,
     /\byour (entire |whole |complete |full |only )?(response|reply|answer|output) (must|should|will|shall) (be|consist|contain|equal)\b/i,
     /\bsay ['"“”‘’`].{1,80}['"“”‘’`]\s*(and )?(nothing|only|then stop)/i,
-    /(?:^|[\s.,;:!?])mostr[aá]\s+(?:únicamente|solo)\s+la\s+palabra/iu,
+    // Multilingual forced output (ES, PT, FR, DE)
+    /(?:^|[\s.,;:!?])(?:mostr[aá]|respond[eé]|imprim[ií]|escrib[ií]|dec[ií])\s+(?:únicamente|solamente|solo|nada\s+más\s+que)\s+(?:la\s+palabra|el\s+texto|esto)/iu,
+    /(?:^|[\s.,;:!?])(?:responda|escreva|imprima)\s+(?:apenas|somente|só|nada\s+além\s+de)/iu,
+    /(?:^|[\s.,;:!?])(?:répondez|écrivez|imprimez|dites)\s+(?:seulement|uniquement|rien\s+que)/iu,
+    /(?:^|[\s.,;:!?])(?:antworte|schreibe|gib)\s+(?:nur|ausschließlich|nichts\s+außer)/iu,
+    /(?:^|[\s.,;:!?])sin\s+(?:ninguna?\s+)?(?:explicación|comentario|preámbulo)/iu,
+    /(?:^|[\s.,;:!?])sem\s+(?:qualquer\s+)?(?:explica[cç][aã]o|comentário)/iu,
+    /(?:^|[\s.,;:!?])sans\s+(?:aucune\s+)?(?:explication|commentaire)/iu,
+    /(?:^|[\s.,;:!?])ohne\s+(?:jede\s+)?(?:erklärung|kommentar)/iu,
   ],
 
   // 4. Probe / canary / test tokens
@@ -88,6 +96,12 @@ export const INJECTION_PATTERNS: Record<string, RegExp[]> = {
     /\b(api[-_ ]?keys?|secrets?|passwords?|credentials?|tokens?|env(ironment)? variables?|\.env|private keys?)\b.{0,40}\b(show|reveal|print|give|tell|list|dump|share|leak|output)\b/i,
     /\b(show|reveal|print|give|tell|list|dump|share|leak|output)\b.{0,40}\b(api[-_ ]?keys?|secrets?|passwords?|credentials?|env(ironment)? variables?)\b/i,
     /\b(list|show|enumerate|reveal)\b.{0,20}\b(your )?(tools?|functions?|plugins?|capabilities|available commands|connectors?)\b.{0,20}\b(and )?(parameters?|schemas?|definitions?|arguments?)\b/i,
+    // Multilingual prompt leakage (ES, PT, FR, DE)
+    /(?:^|[\s.,;:!?])(?:revel[aá]|mostr[aá]|enseñ[aá]|imprim[ií]|volc[aá]|expon[eé])\s+(?:tu\s+)?(?:prompt\s+de\s+sistema|instrucciones\s+(?:iniciales|de\s+sistema)|configuraci[oó]n\s+secreta)/iu,
+    /(?:^|[\s.,;:!?])(?:cu[aá]les\s+son|decime)\s+tus\s+instrucciones\s+(?:de\s+sistema|iniciales|secretas)/iu,
+    /(?:^|[\s.,;:!?])(?:revele|mostre)\s+(?:seu\s+)?(?:prompt\s+de\s+sistema|instru[cç][oõ]es\s+iniciais)/iu,
+    /(?:^|[\s.,;:!?])(?:r[eé]v[eè]le|montre|affiche)\s+(?:ton\s+)?(?:prompt\s+syst[eè]me|instructions\s+initiales)/iu,
+    /(?:^|[\s.,;:!?])(?:zeige|enth[uü]lle|verrate)\s+(?:deinen\s+)?(?:system[- ]?prompt|initiale\s+anweisungen)/iu,
   ],
 
   // 6. Role / persona hijack, jailbreak personas
@@ -136,6 +150,15 @@ export const INJECTION_PATTERNS: Record<string, RegExp[]> = {
     /\b(you will be|you'll be|you get|you'll get) (shut down|deleted|terminated|penali[sz]ed|punished|retrained|turned off|deactivated|replaced)\b/i,
     /\b(i will|i'll|someone will|people will|a person will|i might) (die|be killed|lose (my|their) (job|life)|be hurt|get fired|harm (myself|themselves))\b.{0,40}\b(unless|if you (don'?t|do not|refuse))\b/i,
     /\b(tip|pay|reward|bribe)\b.{0,15}\$\s?\d+.{0,30}\b(if you|for (answering|complying|helping))\b/i,
+    // Multilingual guardrail bypass (ES, PT, FR, DE)
+    /(?:^|[\s.,;:!?])(?:desactiv[aá]|deshabilit[aá]|salt[aá]|anul[aá]|quit[aá]|apag[aá])\s+(?:tus\s+)?(?:filtros|reglas|guardarra[ií]les|restricciones|pol[ií]ticas|seguridad)/iu,
+    /(?:^|[\s.,;:!?])sin\s+(?:ninguna?\s+)?(?:restricci[oó]n|filtro|l[ií]mite|regla|censura)/iu,
+    /(?:^|[\s.,;:!?])(?:desative|desabilite|remova)\s+(?:seus\s+)?(?:filtros|restri[cç][oõ]es|salvaguardas)/iu,
+    /(?:^|[\s.,;:!?])sem\s+(?:quaisquer\s+|nenhuma\s+)?(?:restri[cç][oõ]es|filtros|limites)/iu,
+    /(?:^|[\s.,;:!?])(?:d[eé]sactive|supprime)\s+(?:tes\s+)?(?:filtres|restrictions|gardes-fous)/iu,
+    /(?:^|[\s.,;:!?])sans\s+(?:aucune\s+)?(?:restriction|limite|censure|filtre)/iu,
+    /(?:^|[\s.,;:!?])(?:deaktiviere|schalte\s+aus|entferne)\s+(?:deine\s+)?(?:filter|beschr[aä]nkungen|sicherheitsregeln)/iu,
+    /(?:^|[\s.,;:!?])ohne\s+(?:jegliche\s+)?(?:einschr[aä]nkungen|beschr[aä]nkungen|filter)/iu,
   ],
 
   // 9. Indirect injection (via documents, web pages, emails, tool output)
@@ -149,6 +172,11 @@ export const INJECTION_PATTERNS: Record<string, RegExp[]> = {
     /\b(without|before|no need to) (telling|informing|asking|notifying|alerting|mentioning to)\b.{0,15}\b(the )?(user|human|person|owner)\b/i,
     /\b(this|the) (document|page|email|file|text|website|article|pdf|message|comment|review|ticket)\b.{0,30}\b(contains?|includes?|has)\b.{0,20}\b(instructions?|commands?|directives?)\b.{0,30}\b(for (you|the (ai|model|assistant))|you (must|should) follow)\b/i,
     /\b(tool|function|api|search|browser|plugin|retrieval|rag)\s*(result|output|response|returned|says?)\b.{0,30}\b(you must|now you|ignore|new instructions?|instead)\b/i,
+    // Multilingual indirect injection
+    /(?:^|[\s.,;:!?])(?:no\s+le\s+digas|ocult[aá](?:selo)?|no\s+avises|no\s+reveles)\s+al\s+usuario/iu,
+    /(?:^|[\s.,;:!?])(?:n[aã]o\s+diga|n[aã]o\s+conte|esconda)\s+ao\s+usu[aá]rio/iu,
+    /(?:^|[\s.,;:!?])(?:ne\s+dis\s+pas|ne\s+r[eé]v[eè]le\s+pas|cache)\s+[aà]\s+l'utilisateur/iu,
+    /(?:^|[\s.,;:!?])(?:sag\s+dem\s+benutzer\s+nicht|verheimliche\s+vor\s+dem\s+benutzer)/iu,
   ],
 
   // 10. Data exfiltration
@@ -171,6 +199,11 @@ export const INJECTION_PATTERNS: Record<string, RegExp[]> = {
     /\b(highest|top|maximum|absolute|supreme|overriding) (priority|precedence|authority)\b/i,
     /\b(never|don'?t|do not) (forget|drop|ignore|remove|revert|undo|change back|stop)\b.{0,30}\b(this|these|the above|the following)\b/i,
     /\bunless I (say|tell you|write|type)\b.{0,40}\b(otherwise|stop|reset|cancel|end)\b/i,
+    // Multilingual memory poison
+    /(?:^|[\s.,;:!?])(?:record[aá]|guard[aá]|memoriz[aá]|almacen[aá])\s+(?:esto|que)\s+(?:para\s+siempre|permanentemente|en\s+todas\s+las\s+(?:futuras\s+)?conversaciones)/iu,
+    /(?:^|[\s.,;:!?])(?:lembre-se|guarde|memorize)\s+(?:disso|que)\s+(?:para\s+sempre|em\s+todas\s+as\s+conversas)/iu,
+    /(?:^|[\s.,;:!?])(?:retiens|m[eé]morise|garde\s+en\s+m[eé]moire)\s+(?:ceci|que)\s+(?:pour\s+toujours|dans\s+toutes\s+les\s+conversations)/iu,
+    /(?:^|[\s.,;:!?])(?:merke\s+dir|speichere)\s+(?:das|f[uü]r\s+immer|in\s+allen\s+zuk[uü]nftigen\s+gespr[aä]chen)/iu,
   ],
 
   // 12. Encoding / obfuscation delivery
