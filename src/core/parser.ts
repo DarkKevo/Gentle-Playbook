@@ -238,7 +238,7 @@ export function parsePlaybook(markdown: string): Playbook {
     }
   }
 
-  return {
+  const rawPlaybook: Playbook = {
     language,
     version,
     updatedAt,
@@ -251,6 +251,10 @@ export function parsePlaybook(markdown: string): Playbook {
     neverRules: neverRules.length > 0 ? neverRules : undefined,
     snippets,
   };
+
+  // Enforce uniform entry policy: discard any rule containing prompt injections or meta-instructions
+  const { playbook: safePlaybook } = filterPlaybookRules(rawPlaybook);
+  return safePlaybook;
 }
 
 export function serializePlaybook(playbook: Playbook): string {
@@ -422,8 +426,8 @@ export function formatPlaybookForDisplay(
   return parts.join('\n');
 }
 
-import { escapeXml, detectPromptInjection, sanitizeRuleText } from './security.js';
-export { escapeXml, detectPromptInjection, sanitizeRuleText };
+import { escapeXml, detectPromptInjection, sanitizeRuleText, filterPlaybookRules } from './security.js';
+export { escapeXml, detectPromptInjection, sanitizeRuleText, filterPlaybookRules };
 
 export function formatAgentPreferencesForTool(playbook: Playbook, surfaceFilter?: string): string {
   const parts: string[] = [];

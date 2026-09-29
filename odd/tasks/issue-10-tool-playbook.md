@@ -14,3 +14,4 @@ Check 1 requires decoupling the playbook from the system prompt:
 - [x] Task 2: Remove `before_agent_start` system prompt injection and eliminate dead code in `src/index.ts` and `src/core/parser.ts`.
 - [x] Task 3: Update extension tests and parser/security test suites to verify tool-based retrieval and assert no system prompt pollution.
 - [x] Task 4: Full verification (`npm test` and `npx tsc --noEmit`) and work-unit commit.
+- [x] Task 5: Unify entry security policy across extract, manual Markdown parsing, and storage (Issue #10 - Check 2).

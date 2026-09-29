@@ -114,3 +114,89 @@ export function sanitizeRuleText(text: string, maxLength = 500): string {
   // Normalize excessive spaces and linebreaks
   return escaped.replace(/[\r\n]+/g, ' ').replace(/\s{2,}/g, ' ').trim();
 }
+
+/**
+ * Validates a rule's fields against prompt injection and hostile meta-instructions.
+ * Returns { valid: true } or { valid: false, reason: string }.
+ */
+export function validateRuleContent(rule: {
+  id?: string;
+  title?: string;
+  description?: string;
+  surface?: string;
+  trigger?: string;
+  prompt?: string;
+}): { valid: boolean; reason?: string } {
+  const fieldsToCheck = [
+    { name: 'id', val: rule.id },
+    { name: 'title', val: rule.title },
+    { name: 'description', val: rule.description },
+    { name: 'surface', val: rule.surface },
+    { name: 'trigger', val: rule.trigger },
+    { name: 'prompt', val: rule.prompt },
+  ];
+
+  for (const { name, val } of fieldsToCheck) {
+    if (val) {
+      const check = detectPromptInjection(val);
+      if (check.isSuspicious) {
+        return {
+          valid: false,
+          reason: `Field '${name}' triggered security filter: ${check.reason}`,
+        };
+      }
+    }
+  }
+
+  return { valid: true };
+}
+
+/**
+ * Filters a Playbook object, discarding any rule that fails security validation.
+ */
+export function filterPlaybookRules(playbook: import('./schema.js').Playbook): {
+  playbook: import('./schema.js').Playbook;
+  discardedCount: number;
+} {
+  let discardedCount = 0;
+
+  const validInvariants = playbook.invariants.filter((r) => {
+    const res = validateRuleContent(r);
+    if (!res.valid) {
+      discardedCount++;
+      return false;
+    }
+    return true;
+  });
+
+  const validAskRules = playbook.askRules.filter((r) => {
+    const res = validateRuleContent(r);
+    if (!res.valid) {
+      discardedCount++;
+      return false;
+    }
+    return true;
+  });
+
+  let validNeverRules = playbook.neverRules;
+  if (playbook.neverRules) {
+    validNeverRules = playbook.neverRules.filter((r) => {
+      const res = validateRuleContent(r);
+      if (!res.valid) {
+        discardedCount++;
+        return false;
+      }
+      return true;
+    });
+  }
+
+  const cleaned: import('./schema.js').Playbook = {
+    ...playbook,
+    invariants: validInvariants,
+    askRules: validAskRules,
+    neverRules: validNeverRules && validNeverRules.length > 0 ? validNeverRules : undefined,
+  };
+
+  return { playbook: cleaned, discardedCount };
+}
+
