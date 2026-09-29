@@ -55,11 +55,22 @@ Or `/gentle-playbook-add [lang|agents]`.
 - If no argument is provided, an interactive prompt will ask:
   - 🤖 **Preferencias de Agente** (Supervisión y Gobernanza de IA)
   - 💻 **Regla de Arquitectura de Lenguaje** (Go, TypeScript, Python, etc.)
-- Next, prompts for the natural language description (e.g., *"no se hace write si no yo lo apruebo, primero el approach del cambio y luego mi aprobación"*).
+- Next, prompts for the natural language description (e.g., *"no usar librerías externas para http"* o *"no hacer write sin aprobacion"*).
 - Pre-checks against hostile prompt injection or meta-instruction patterns.
-- Lets the user select whether it is `[NORMATIVA]` (invariant) or `[ASK]` (checkpoint).
-- Uses the model to synthesize the rule structure (action/surface, trigger, anti-trigger, prompt).
+- Lets the user select rule type:
+  - `[NORMATIVA]` (invariante dura).
+  - `[ASK]` (checkpoint condicional).
+  - `[PROHIBICIÓN / NEVER]` (restricción terminante de no hacer).
+- If it is a Never rule, prompts for scope:
+  - 🎯 **Específica**: solo este elemento/librería.
+  - 🌐 **Categórica / Familia**: este elemento y cualquier alternativa similar de terceros.
+  - ✍️ **Personalizada**: alcance a medida con sanitización.
+- Uses the model to synthesize the rule structure.
 - Shows a confirmation preview and saves it to the playbook.
+
+### Semantic Pre-flight & Write Enforcement
+- **Prompt Pre-flight:** The agent semantically evaluates whether incoming user prompts violate active rules or attempt to bypass checkpoints (`"no preguntes"`), displaying interactive confirmation dialogs in TUI before proceeding.
+- **Write Barrier:** Tool execution (`write`/`edit`) enforces canonical topology and intercepts unauthorized paths or path traversal (`../../`) before disk mutation.
 
 ### Managing & Deleting Rules Interactively
 Run:

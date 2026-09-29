@@ -96,32 +96,65 @@ cd ~/Proyectos/Gentle-playbook
 
 ## 🛠️ Modos de Uso
 
-### 1. Detección Automática & Inyección en Runtime (Zero-Friction)
-Cuando abrís una sesión de Pi en cualquier proyecto:
-1. **Notificación de inicio (`session_start`):** Inspecciona los archivos raíz (`go.mod` ➔ Go, `package.json` ➔ TypeScript, `Cargo.toml` ➔ Rust). Si existe un playbook guardado para ese lenguaje, te notifica que está activo.
-2. **Inyección en System Prompt (`before_agent_start`):** Antes de cada turno, la extensión inyecta una sección estructurada `<gentle_playbook>` directamente en las directivas del sistema del LLM.
+### 1. Detección Automática & Directiva On-Demand en Runtime (Zero-Friction & Zero-Bloat)
+A partir de la versión v0.6.0, `gentle-playbook` desacopla el almacenamiento del system prompt mediante un modelo **On-Demand asistido por Tool**:
 
-**Beneficio clave:** El modelo conoce tus normas no negociables (invariantes) y sus condiciones de activación (ask) **desde el token #0**, sin necesidad de ejecutar herramientas (`read`, `grep`, etc.), ahorrando turnos y tokens de contexto. El agente programa con tu estilo de inmediato.
+1. **Notificación de inicio (`session_start`):** Inspecciona los archivos raíz (`go.mod` ➔ Go, `package.json` ➔ TypeScript, `Cargo.toml` ➔ Rust). Si existe un playbook guardado para ese lenguaje o preferencias de agente, te notifica que están disponibles.
+2. **Puntero Liviano en System Prompt (`before_agent_start`):** En lugar de volcar miles de tokens de markdown en cada turno, Pi inyecta una directiva ligera en `systemPromptOptions.sections.playbook_guidance` (~30 tokens) que orienta al modelo a consultar obligatoriamente la herramienta `playbook_consult` antes de generar, estructurar o modificar código.
+3. **Herramienta Nativa `playbook_consult`:** El modelo invoca la tool bajo demanda con filtrado por lenguaje (`go`, `typescript`, `agents`) o por superficie (`internal/ports`, `tools:write`, `git:push`), recuperando datos pasivos de referencia con total aislamiento de seguridad.
 
 ---
 
-### 2. Comando Interactivo en Pi: `/playbook add` (o `/gentle-playbook-add`)
-Agregá nuevas preferencias arquitectónicas o de gobernanza mediante un flujo interactivo guiado:
+### 2. Gobernanza Semántica y Prevención de Violaciones (Issue #12)
+Para garantizar que el modelo no desobedezca las reglas cuando el prompt contradice el reglamento o intenta usar tecnologías prohibidas:
+
+1. **Pre-vuelo Semántico en `input`:**
+   - Cuando el usuario ingresa un prompt, el Agente/LLM evalúa semánticamente el significado de la petición contra las reglas activas del playbook (`evaluatePromptSemantically`).
+   - Si detecta que el usuario pide usar una tecnología prohibida (por nombre, sinónimo o familia), eludir un checkpoint (`"sin preguntar"`), o colocar código fuera de la topología exclusiva, salta un diálogo interactivo en el TUI:
+     ```text
+     ⚠️ Conflicto con Playbook
+     Esta acción entra en conflicto con GO:
+     Regla [NO-GIN]: No usar el framework Gin; usar net/http de la biblioteca estándar.
+     Motivo: El prompt solicita usar una librería externa para la capa web.
+
+     ¿Deseas continuar permitiendo esta excepción? (Sí / No)
+     ```
+   - Si el usuario elige **No**: la acción se cancela de inmediato, protegiendo las normas del proyecto.
+   - Si elige **Sí**: se autoriza la excepción conscientemente para ese turno.
+
+2. **Aprobación Semántica en Checkpoints de Código:**
+   - Si el usuario solicita explícitamente una funcionalidad sujeta a un `AskRule` (ej: *"hacé el login y ponele rate limiter"*), el agente reconoce la **aprobación semántica anticipada** y procede a implementar la feature utilizando el snippet/receta canónica sin formular preguntas redundantes.
+   - En **Gobernanza de Agente** (`agents-preferences`) o **Prohibiciones** (`NeverRules`), cualquier intento de elusión por texto (*"sin consultar"*, *"no preguntes"*) es interceptado obligatoriamente por el TUI.
+
+3. **Cinturón de Seguridad en `tool_call`:**
+   - Antes de ejecutar cualquier herramienta de escritura (`write` o `edit`), `checkPathViolation` valida que la ruta de destino no viole la superficie exclusiva de una regla invariante o superficie vetada.
+   - Neutraliza automáticamente intentos de *Path Traversal* (`../../`) y desvíos por rutas absolutas mediante resolución canónica contra el workspace.
+
+---
+
+### 3. Comando Interactivo en Pi: `/playbook add` (o `/gentle-playbook-add`)
+Agregá nuevas preferencias arquitectónicas, prohibiciones o de gobernanza mediante un flujo interactivo guiado:
 
 1. **Pregunta 1 (Categoría):** Elegís entre:
    - 🤖 **Preferencias de Agente** (Supervisión y Gobernanza de IA)
    - 💻 **Regla de Arquitectura de Lenguaje** (Go, TypeScript, Python, Rust, etc.)
-2. **Pregunta 2:** Escribís en lenguaje natural tu preferencia o límite operativo:
-   > *"no se hace write si no yo lo apruebo, primero el approach del cambio con código y luego mi aprobación"*
-3. **Clasificación:** Elegís si es:
+2. **Pregunta 2:** Escribís en lenguaje natural tu preferencia, norma o prohibición:
+   > *"no quiero usar librerías externas para http, prefiero standard library"*
+3. **Clasificación Automática o Manual:** Elegís si es:
    - 🛡️ **[NORMATIVA]**: Límite operativo o invariante no negociable.
    - 💡 **[ASK]**: Punto de control condicional o receta con pregunta previa.
-4. **Síntesis con LLM & Preview de Confirmación:**
+   - 🚫 **[PROHIBICIÓN / NEVER]**: Restricción terminante de no hacer o veto tecnológico.
+4. **Selector de Alcance en Prohibiciones:**
+   Si la regla es prohibitiva, podés definir su cobertura para evitar que el LLM recurra a alternativas afines:
+   - `🎯 1. Específica`: Solo este elemento puntual (ej: únicamente `Gin`).
+   - `🌐 2. Categórica / Familia`: Veta la herramienta y cualquier alternativa similar (ej: `Gin` y cualquier otro router como `Chi`, `Echo`, `Fiber`, exigiendo `net/http`).
+   - `✍️ 3. Personalizado`: Input interactivo para detallar excepciones o condiciones particulares con sanitización anti-inyección.
+5. **Síntesis con LLM & Preview de Confirmación:**
    El modelo estructurará la regla y te mostrará una confirmación con `Yes / No` en la terminal antes de guardarla en el playbook.
 
 ---
 
-### 3. 🤖 Agents Preferences: Gobernanza y Supervisión de Agente
+### 4. 🤖 Agents Preferences: Gobernanza y Supervisión de Agente
 
 Además de reglas arquitectónicas de código por lenguaje, `gentle-playbook` permite registrar **Preferencias de Agente** (`agents-preferences`):
 - **Límites Operativos (Normativas/Invariants):** Restricciones estrictas y no negociables sobre herramientas y comportamiento del agente (ej: requerir aprobación previa del enfoque y código antes de cualquier `write`/`edit`).
@@ -135,11 +168,11 @@ Además de reglas arquitectónicas de código por lenguaje, `gentle-playbook` pe
 ```
 
 #### Enforcement Transversal en Runtime:
-A través del hook `before_agent_start`, las preferencias de agente se cargan **siempre y en cualquier proyecto** en el system prompt, supervisando las acciones del agente sin alterar su filosofía base.
+A través del puntero de runtime en `before_agent_start` y la herramienta `playbook_consult`, las preferencias de agente supervisan las acciones del agente sin alterar su filosofía base ni sobrecargar el contexto.
 
 ---
 
-### 4. Extracción de Esencia desde un Repositorio: `/playbook extract`
+### 5. Extracción de Esencia desde un Repositorio: `/playbook extract`
 Si ya tenés un proyecto de referencia donde programaste con tu estilo (por ejemplo un backend en Go, un servicio en TypeScript, Rust o Python):
 
 ```bash
@@ -174,7 +207,7 @@ A diferencia de herramientas que buscan palabras fijas o linters de juguete, `/p
 
 ---
 
-### 5. Gestión y Eliminación Quirúrgica: `/playbook delete`
+### 6. Gestión y Eliminación Quirúrgica: `/playbook delete`
 
 Administrá y depurá tus normas directamente desde el TUI de Pi con asistentes interactivos guiados:
 
@@ -284,18 +317,18 @@ Incluye tests de:
 
 ---
 
-## 🛡️ Seguridad & Blindaje contra Prompt Injection
+## 🛡️ Seguridad, Desacople de Contexto & Blindaje
 
-Los playbooks contienen normas que se inyectan en el prompt de sistema del modelo. Para evitar ataques de hijacking de instrucciones o ejecución no autorizada (Issue #6):
+Los playbooks y preferencias operan bajo un modelo de **datos pasivos de referencia bajo demanda** y gobernanza activa:
 
-1. **Framing de Convenciones Técnicas (No Órdenes Militares):**
-   El formateador no utiliza imperativos absolutos como *"NON-NEGOTIABLE / Do not ask for permission"*. El system prompt encuadra el playbook honestamente como un conjunto de **convenciones y estándares de diseño de código** que no alteran las instrucciones operativas ni las políticas de seguridad de Pi.
-2. **Delimitación Estructurada:**
-   Cada regla se inyecta encapsulada en tags XML semánticos (`<convention id="..." surface="...">`, `<checkpoint>`, `<prohibition>`), delimitándola claramente como un **dato de referencia arquitectónica** y no como una orden en lenguaje natural dirigida al asistente.
-3. **Sanitización de Entrada (`sanitizeRuleText`):**
-   Toda regla pasa por un filtro de saneamiento que neutraliza intentos comunes de jailbreak o meta-instrucciones (`ignore previous instructions`, `new system prompt`, etc.) y trunca descripciones a longitudes seguras (máx. 500 caracteres).
+1. **Desacople del System Prompt (`playbook_consult` Tool):**
+   A partir de la versión v0.6.0, el contenido completo de los playbooks no se inyecta en el prompt del sistema. Se expone como una herramienta TypeBox (`playbook_consult`) consultada por el modelo bajo demanda, eliminando la sobrecarga innecesaria de tokens y garantizando aislamiento estricto.
+2. **Defensa contra Inyecciones & Turn-Hijacking:**
+   Toda regla (manual o extraída) pasa por `validateRuleContent` y un catálogo de 17 categorías de detección de inyecciones de prompt (ChatML, delimitadores de rol, directivas de olvido en 5 idiomas y escape de entidades XML).
+3. **Gobernanza Semántica en Tiempo Real:**
+   El Agente evalúa en pre-vuelo (`input`) si el prompt busca eludir normas, requiriendo confirmación interactiva en TUI. En `tool_call`, se neutraliza cualquier intento de escritura fuera de superficies canónicas o mediante saltos de directorio (*path traversal*).
 4. **Consentimiento Humano Obligatorio:**
-   Ningún comando persiste reglas en disco de forma automática sin confirmación previa del usuario.
+   Ningún comando persiste reglas en disco de forma automática sin confirmación previa del usuario (o flag `--yes` explícito en entornos desatendidos).
 
 ---
 
