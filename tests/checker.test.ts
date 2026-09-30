@@ -799,5 +799,87 @@ Sin embargo, viola la regla arquitectónica:
       expect(match).not.toBeNull();
       expect(match?.rule.id).toBe('public-rate-limit');
     });
+
+    it('should detect violation for non-handler source files outside exclusive surface (JD-A-005)', () => {
+      // Archivo de código en pkg/ sin la palabra handler
+      const match = checkPathViolation('pkg/login.go', samplePlaybook);
+      expect(match).not.toBeNull();
+      expect(match?.rule.id).toBe('http-handlers-ports');
+    });
+
+    it('should support comma-separated surfaces in checkPathViolation (JD-A-006)', () => {
+      const multiSurfacePb: Playbook = {
+        language: 'go',
+        version: 1,
+        updatedAt: '2026-09-29',
+        topology: { pattern: 'Hexagonal', directories: [] },
+        invariants: [
+          {
+            id: 'ports-exclusive',
+            type: 'invariant',
+            title: 'Ports exclusivos',
+            surface: 'internal/ports/httpserver, internal/ports/grpc',
+            description: 'Los adapters de entrada viven exclusivamente en internal/ports/httpserver o internal/ports/grpc.',
+          },
+        ],
+        askRules: [],
+        neverRules: [],
+        snippets: [],
+      };
+
+      // Ambos deben ser permitidos
+      expect(checkPathViolation('internal/ports/httpserver/health.go', multiSurfacePb)).toBeNull();
+      expect(checkPathViolation('internal/ports/grpc/server.go', multiSurfacePb)).toBeNull();
+
+      // Fuera de ambos debe ser violado si es un adapter/handler
+      expect(checkPathViolation('pkg/handlers/server.go', multiSurfacePb)).not.toBeNull();
+    });
+
+    it('should NOT treat recommended text like "usar net/http" inside parentheses as prohibited (JD-A-007)', () => {
+      const pbWithRecommended: Playbook = {
+        language: 'go',
+        version: 1,
+        updatedAt: '2026-09-29',
+        topology: { pattern: 'Hexagonal', directories: [] },
+        invariants: [],
+        askRules: [],
+        neverRules: [
+          {
+            id: 'no-gin',
+            type: 'never',
+            title: 'No Gin',
+            surface: 'dependencies',
+            description: 'No usar frameworks (por ejemplo Gin; usar net/http).',
+          },
+        ],
+        snippets: [],
+      };
+
+      // "usar net/http" no debe bloquear el prompt
+      expect(checkPromptViolation('vamos a usar net/http', pbWithRecommended)).toBeNull();
+    });
+
+    it('should safely escape rule IDs with regex characters without throwing SyntaxError (JD-A-008)', () => {
+      const pbSpecialChars: Playbook = {
+        language: 'c++',
+        version: 1,
+        updatedAt: '2026-09-29',
+        topology: { pattern: 'Standard', directories: [] },
+        invariants: [],
+        askRules: [],
+        neverRules: [
+          {
+            id: 'no-c++',
+            type: 'never',
+            title: 'No C++',
+            surface: 'dependencies',
+            description: 'No usar c++ en este módulo.',
+          },
+        ],
+        snippets: [],
+      };
+
+      expect(() => checkPromptViolation('crear módulo en c++', pbSpecialChars)).not.toThrow();
+    });
   });
 });

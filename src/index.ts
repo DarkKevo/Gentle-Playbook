@@ -14,8 +14,10 @@ import {
   checkPromptViolation,
   checkPathViolation,
   evaluatePromptSemantically,
+  evaluatePromptFull,
   checkAskTrigger,
   AskTriggerMatch,
+  PromptEvaluationResult,
 } from './core/checker.js';
 import { getLanguageMenuLabels, resolveLanguage } from './core/languages.js';
 
@@ -453,7 +455,18 @@ export default function (pi: ExtensionAPI) {
         let targetLang = parts[1];
         const autoConfirm = parts.includes('--yes') || parts.includes('-y');
         const ruleFlagIdx = parts.indexOf('--rule');
-        const directRuleId = ruleFlagIdx >= 0 ? parts[ruleFlagIdx + 1] : undefined;
+        let directRuleId: string | undefined = undefined;
+        if (ruleFlagIdx >= 0) {
+          const candidate = parts[ruleFlagIdx + 1];
+          if (!candidate || candidate.startsWith('-')) {
+            ctx.ui?.notify?.(
+              'Error: El flag --rule requiere el ID de la regla a eliminar (ej: --rule http-handlers-ports).',
+              'error'
+            );
+            return;
+          }
+          directRuleId = candidate;
+        }
 
         if (!targetLang || targetLang.startsWith('--')) {
           const languages = await storage.listLanguages();
@@ -1131,17 +1144,17 @@ export default function (pi: ExtensionAPI) {
         };
       }
 
+      const originalText = promptText;
+
       for (const pb of playbooksToCheck) {
-        let violation = null;
+        let evaluation: PromptEvaluationResult;
         if (completePrompt) {
-          try {
-            violation = await evaluatePromptSemantically(promptText, pb, completePrompt);
-          } catch {
-            violation = checkPromptViolation(promptText, pb);
-          }
+          evaluation = await evaluatePromptFull(promptText, pb, completePrompt);
         } else {
-          violation = checkPromptViolation(promptText, pb);
+          evaluation = await evaluatePromptFull(promptText, pb);
         }
+
+        const violation = evaluation.violation;
 
         if (violation) {
           const pbName = pb.language === AGENTS_PREFERENCES_ID ? 'Agents Preferences' : pb.language.toUpperCase();
@@ -1211,7 +1224,7 @@ export default function (pi: ExtensionAPI) {
           }
         } else {
           // Si no hubo violación, verificar si el prompt activa una regla ASK
-          const askMatch = checkAskTrigger(promptText, pb);
+          const askMatch = evaluation.triggeredAsk || checkAskTrigger(promptText, pb);
           if (askMatch) {
             const askId = askMatch.rule.id.toUpperCase();
             if (ctx.ui?.confirm) {
@@ -1233,6 +1246,9 @@ export default function (pi: ExtensionAPI) {
         }
       }
 
+      if (event.text !== originalText) {
+        return { action: 'transform', text: event.text };
+      }
       return { action: 'continue' };
     } catch {
       return { action: 'continue' };
@@ -1262,6 +1278,44 @@ export default function (pi: ExtensionAPI) {
       if (agentPrefs) playbooksToCheck.push(agentPrefs);
 
       if (playbooksToCheck.length === 0) return undefined;
+
+      // 1. Evaluar restricciones operativas de Agent Preferences en la herramienta (tools:write, tools:edit, tools:all)
+      if (agentPrefs) {
+        const toolAction = event.toolName;
+        const matchingToolConstraints = (agentPrefs.invariants || []).filter((inv) => {
+          const s = (inv.surface || '').toLowerCase();
+          return (
+            s === 'tools:all' ||
+            s === `tools:${toolAction}` ||
+            s === 'tools:write' ||
+            s === 'tools:edit' ||
+            s === 'tools'
+          );
+        });
+
+        for (const constraint of matchingToolConstraints) {
+          if (ctx.ui?.confirm) {
+            const confirmed = await ctx.ui.confirm(
+              '🤖 Supervisión de Agente (Límite Operativo)',
+              `El agente intenta ejecutar la acción "${toolAction}" sobre "${targetPath}":\n\n` +
+                `Regla [${constraint.id.toUpperCase()}]: ${constraint.description}\n\n` +
+                `¿Autorizas la ejecución de esta herramienta?`
+            );
+            if (!confirmed) {
+              ctx.ui?.notify?.(`Operación ${toolAction} bloqueada por supervisión de agente.`, 'warning');
+              return {
+                block: true,
+                reason: `Operación bloqueada por regla de supervisión [${constraint.id.toUpperCase()}]: ${constraint.description}`,
+              };
+            }
+          } else {
+            return {
+              block: true,
+              reason: `Operación bloqueada: la acción "${toolAction}" requiere autorización interactiva según la regla [${constraint.id.toUpperCase()}]: ${constraint.description}`,
+            };
+          }
+        }
+      }
 
       for (const pb of playbooksToCheck) {
         const pathViolation = checkPathViolation(targetPath, pb, cwd);

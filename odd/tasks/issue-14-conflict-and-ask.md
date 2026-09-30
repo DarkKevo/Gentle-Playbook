@@ -16,3 +16,14 @@ Issue #14 highlights residual governance issues from #12 under `--print` and int
 - [x] Task 4: Categorical & Family Prohibitions in Never Rules. Update semantic evaluation and checker pattern matching to identify family members and stdlib-exclusivity violations (e.g. Chi/Echo when Gin is banned and net/http is mandated).
 - [x] Task 5: Unit Tests, Hermetic Integration Verification & Docs. Write tests in `tests/checker.test.ts` and `tests/extension.test.ts` covering all 4 aspects; verify `tsc --noEmit` and `npm test`.
 - [x] Task 6: Red Team Hardening & Blindajes. Mitigate prefix boundary spoofing in `checkPathViolation`, expand infinitive bypass regexes, filter preposition false-positives (`por`/`como por ejemplo`), prevent login token auth suppression in asks, and contextualize `echo`/`mux` detection. Verified with 5 dedicated red-team regression tests.
+- [x] Task 7: Blind Audit Structural Remediation (JD-A-001 to JD-A-011).
+  - JD-A-001: Return `{ action: 'transform', text: event.text }` in `pi.on('input')` when prompt is modified.
+  - JD-A-002: Enforce agent governance rules (`tools:write`, `tools:edit`, `tools:all`) in `pi.on('tool_call')`.
+  - JD-A-003: Bidirectional surface matching in `formatPlaybookForTool` / `formatAgentPreferencesForTool`.
+  - JD-A-004: Preserve semantic `triggeredAskId` in `evaluatePromptSemantically` via `evaluatePromptFull`.
+  - JD-A-005: Expand `checkPathViolation` beyond hardcoded HTTP keywords to cover all domain/service source files.
+  - JD-A-006: Support comma-separated surfaces in `checkPathViolation`.
+  - JD-A-007: Exclude recommended "usar/salvo" tokens inside parentheses from never rules.
+  - JD-A-008: Escape regex characters in `idSubject` and target words.
+  - JD-A-010: Display `neverRules` for Agent Preferences in `formatPlaybookForDisplay`.
+  - JD-A-011: Guard against accidental full playbook deletion when `--rule` is passed without rule ID in `/playbook delete`.

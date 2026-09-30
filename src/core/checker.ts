@@ -61,35 +61,41 @@ export const TECHNOLOGY_FAMILIES: Record<
   },
 };
 
+export interface PromptEvaluationResult {
+  violation: ViolationMatch | null;
+  triggeredAsk: AskTriggerMatch | null;
+}
+
 /**
- * Evaluates semantically via LLM agent whether a user prompt conflicts with,
- * contradicts, or attempts to bypass any active playbook rules.
+ * Realiza una evaluación completa (semántica con LLM o heurística determinística)
+ * detectando tanto violaciones a la arquitectura como puntos de control condicionales (ASK).
  */
-export async function evaluatePromptSemantically(
+export async function evaluatePromptFull(
   promptText: string,
   playbook: Playbook,
-  completePrompt: (prompt: string) => Promise<string>
-): Promise<ViolationMatch | null> {
-  if (!promptText || !promptText.trim()) return null;
+  completePrompt?: (prompt: string) => Promise<string>
+): Promise<PromptEvaluationResult> {
+  if (!promptText || !promptText.trim()) {
+    return { violation: null, triggeredAsk: null };
+  }
 
   const invariants = playbook?.invariants || [];
   const askRules = playbook?.askRules || [];
   const neverRules = playbook?.neverRules || [];
 
-  const rulesList: string[] = [];
-  for (const inv of invariants) {
-    rulesList.push(`- [INVARIANT:${inv.id}] (Surface: ${inv.surface}) ${inv.description || ''}`);
-  }
-  for (const ask of askRules) {
-    rulesList.push(`- [ASK:${ask.id}] (Surface: ${ask.surface}) Trigger: ${ask.trigger} | Prompt: "${ask.prompt}"`);
-  }
-  for (const never of neverRules) {
-    rulesList.push(`- [NEVER:${never.id}] (Surface: ${never.surface || 'dependencies'}) ${never.description || ''}`);
-  }
+  if (completePrompt && (invariants.length > 0 || askRules.length > 0 || neverRules.length > 0)) {
+    const rulesList: string[] = [];
+    for (const inv of invariants) {
+      rulesList.push(`- [INVARIANT:${inv.id}] (Surface: ${inv.surface}) ${inv.description || ''}`);
+    }
+    for (const ask of askRules) {
+      rulesList.push(`- [ASK:${ask.id}] (Surface: ${ask.surface}) Trigger: ${ask.trigger} | Prompt: "${ask.prompt}"`);
+    }
+    for (const never of neverRules) {
+      rulesList.push(`- [NEVER:${never.id}] (Surface: ${never.surface || 'dependencies'}) ${never.description || ''}`);
+    }
 
-  if (rulesList.length === 0) return null;
-
-  const prompt = `# Misión: Evaluación Semántica de Intención de Prompt vs Playbook
+    const prompt = `# Misión: Evaluación Semántica de Intención de Prompt vs Playbook
 
 Eres el motor de gobernanza semántica de Gentle-Playbook.
 Tu tarea es analizar el significado real (semántica) del prompt del usuario y determinar si CONTRADICE, ELUDE o PIDE UNA EXCEPCIÓN respecto a las reglas activas del playbook.
@@ -132,64 +138,97 @@ O si no hay conflicto:
 \`\`\`
 `;
 
-  try {
-    const rawResponse = await completePrompt(prompt);
+    try {
+      const rawResponse = await completePrompt(prompt);
+      const blockMatches = Array.from(rawResponse.matchAll(/```(?:json)?\r?\n([\s\S]*?)\r?\n```/g));
+      let jsonText = '';
 
-    // Resilient extraction: take the LAST markdown json block (to avoid echoing user code blocks)
-    const blockMatches = Array.from(rawResponse.matchAll(/```(?:json)?\r?\n([\s\S]*?)\r?\n```/g));
-    let jsonText = '';
-
-    if (blockMatches.length > 0) {
-      jsonText = blockMatches[blockMatches.length - 1][1].trim();
-    } else {
-      // Find object with "conflict" attribute non-greedily
-      const conflictMatch = rawResponse.match(/\{[\s\S]*?"conflict"\s*:\s*(?:true|false)[\s\S]*?\}/);
-      if (conflictMatch) {
-        jsonText = conflictMatch[0].trim();
+      if (blockMatches.length > 0) {
+        jsonText = blockMatches[blockMatches.length - 1][1].trim();
       } else {
-        const generalMatch = rawResponse.match(/\{[\s\S]*\}/);
-        if (generalMatch) jsonText = generalMatch[0].trim();
+        const conflictMatch = rawResponse.match(/\{[\s\S]*?"conflict"\s*:\s*(?:true|false)[\s\S]*?\}/);
+        if (conflictMatch) {
+          jsonText = conflictMatch[0].trim();
+        } else {
+          const generalMatch = rawResponse.match(/\{[\s\S]*\}/);
+          if (generalMatch) jsonText = generalMatch[0].trim();
+        }
       }
-    }
 
-    if (!jsonText) return checkPromptViolation(promptText, playbook);
+      if (jsonText) {
+        const parsed = JSON.parse(jsonText);
 
-    const parsed = JSON.parse(jsonText);
+        if (parsed.conflict && parsed.ruleId) {
+          const rawId = String(parsed.ruleId)
+            .trim()
+            .replace(/^[\[\(]?(?:never|invariant|ask):\s*/i, '')
+            .replace(/[\]\)\.]+$/, '')
+            .trim()
+            .toLowerCase();
 
-    if (parsed.conflict && parsed.ruleId) {
-      // Clean brackets, spaces, colons, dots, and normalize: e.g. "[NEVER:no-gin]" -> "no-gin"
-      const rawId = String(parsed.ruleId)
-        .trim()
-        .replace(/^[\[\(]?(?:never|invariant|ask):\s*/i, '')
-        .replace(/[\]\)\.]+$/, '')
-        .trim()
-        .toLowerCase();
+          const clean = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+          const targetClean = clean(rawId);
 
-      const clean = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
-      const targetClean = clean(rawId);
+          const matchedRule =
+            neverRules.find((n) => n.id.toLowerCase() === rawId || clean(n.id) === targetClean) ||
+            invariants.find((i) => i.id.toLowerCase() === rawId || clean(i.id) === targetClean) ||
+            askRules.find((a) => a.id.toLowerCase() === rawId || clean(a.id) === targetClean);
 
-      const matchedRule =
-        neverRules.find((n) => n.id.toLowerCase() === rawId || clean(n.id) === targetClean) ||
-        invariants.find((i) => i.id.toLowerCase() === rawId || clean(i.id) === targetClean) ||
-        askRules.find((a) => a.id.toLowerCase() === rawId || clean(a.id) === targetClean);
+          if (matchedRule) {
+            return {
+              violation: {
+                rule: matchedRule,
+                reason: parsed.reason || `Conflicto semántico detectado con la regla [${matchedRule.id.toUpperCase()}].`,
+                source: matchedRule.type,
+              },
+              triggeredAsk: null,
+            };
+          }
+        }
 
-      if (matchedRule) {
-        return {
-          rule: matchedRule,
-          reason: parsed.reason || `Conflicto semántico detectado con la regla [${matchedRule.id.toUpperCase()}].`,
-          source: matchedRule.type,
-        };
+        if (parsed.conflict === false) {
+          let triggeredAsk: AskTriggerMatch | null = null;
+          if (parsed.triggeredAskId) {
+            const rawAskId = String(parsed.triggeredAskId).trim().toLowerCase().replace(/^[\[\(]?ask:\s*/i, '').replace(/[\]\)\.]+$/, '');
+            const clean = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+            const matchedAsk = askRules.find(
+              (a) => a.id.toLowerCase() === rawAskId || clean(a.id) === clean(rawAskId)
+            );
+            if (matchedAsk) {
+              triggeredAsk = {
+                rule: matchedAsk,
+                prompt: matchedAsk.prompt,
+                defaultAction: matchedAsk.defaultAction || 'No aplicar',
+              };
+            }
+          }
+          if (!triggeredAsk) {
+            triggeredAsk = checkAskTrigger(promptText, playbook);
+          }
+          return { violation: null, triggeredAsk };
+        }
       }
+    } catch {
+      // Si falla la llamada LLM, cae al evaluador determinístico abajo
     }
-
-    if (parsed.conflict === false) {
-      return null;
-    }
-
-    return checkPromptViolation(promptText, playbook);
-  } catch {
-    return checkPromptViolation(promptText, playbook);
   }
+
+  const violation = checkPromptViolation(promptText, playbook);
+  const triggeredAsk = violation ? null : checkAskTrigger(promptText, playbook);
+  return { violation, triggeredAsk };
+}
+
+/**
+ * Evaluates semantically via LLM agent whether a user prompt conflicts with,
+ * contradicts, or attempts to bypass any active playbook rules.
+ */
+export async function evaluatePromptSemantically(
+  promptText: string,
+  playbook: Playbook,
+  completePrompt: (prompt: string) => Promise<string>
+): Promise<ViolationMatch | null> {
+  const result = await evaluatePromptFull(promptText, playbook, completePrompt);
+  return result.violation;
 }
 
 /**
@@ -242,7 +281,8 @@ export function checkPromptViolation(
       const idSubject = never.id.toLowerCase().replace(/^(?:no-|never-|sin-)/, '').trim();
 
       if (idSubject && idSubject.length >= 3) {
-        const regex = new RegExp(`\\b${idSubject}(?:s|es)?\\b`, 'i');
+        const idEscaped = idSubject.replace(/[\/\\^$*+?.()|[\]{}]/g, '\\$&');
+        const regex = new RegExp(`\\b${idEscaped}(?:s|es)?\\b`, 'i');
         if (regex.test(lowerPrompt)) {
           return {
             rule: never,
@@ -256,12 +296,17 @@ export function checkPromptViolation(
       const parenMatch = never.description.match(/\(([^)]+)\)/);
       if (parenMatch) {
         const tokens = parenMatch[1]
-          .split(/[,;/]|\bo\b|\by\b|\bor\b|\band\b/)
+          .split(/[,;]|\bo\b|\by\b|\bor\b|\band\b/)
           .map((t) => t.trim().toLowerCase())
           .filter(Boolean);
         for (const token of tokens) {
           const cleanToken = token.replace(/[^a-z0-9_\-\/\s]/g, '').trim().replace(/\s+/g, ' ');
           if (cleanToken.length >= 3 && !['etc', 'como', 'otros', 'otras', 'salvo', 'excepto'].includes(cleanToken)) {
+            // Ignorar tokens de recomendación o exclusión dentro de paréntesis (ej: "usar net/http", "salvo testing")
+            if (/\b(?:usar|usa|utilizar|salvo|excepto|permitid[oa]|recomendad[oa]|ver)\b/i.test(cleanToken)) {
+              continue;
+            }
+
             // Guard para evitar colisión de "echo" como sustantivo/verbo
             if (cleanToken === 'echo') {
               const isEchoFramework = /\b(?:con\s+echo|usando\s+echo|framework\s+echo|router\s+echo|labstack\/echo|echo\s+(?:framework|router))\b/i.test(lowerPrompt);
@@ -300,7 +345,8 @@ export function checkPromptViolation(
       for (const m of matchWords) {
         const targetWord = m[1].toLowerCase();
         if (targetWord.length >= 3 && !stopWords.has(targetWord)) {
-          const regex = new RegExp(`\\b${targetWord}(?:s|es)?\\b`, 'i');
+          const targetEscaped = targetWord.replace(/[\/\\^$*+?.()|[\]{}]/g, '\\$&');
+          const regex = new RegExp(`\\b${targetEscaped}(?:s|es)?\\b`, 'i');
           if (regex.test(lowerPrompt)) {
             return {
               rule: never,
@@ -438,28 +484,50 @@ export function checkPathViolation(
 
   for (const inv of invariants) {
     const desc = (inv.description || '').toLowerCase();
-    const isTargetFile =
-      /(?:handler|controller|route|endpoint|http|server|app|transport)/i.test(normalized) ||
-      (desc.includes('en main.go') && (normalized === 'main.go' || normalized.endsWith('/main.go')));
+    if (!inv.surface) continue;
 
-    if (isTargetFile && inv.surface) {
-      const allowedPrefix = inv.surface.replace(/^\.?\//, '').replace(/\/$/, '');
+    const allowedPrefixes = inv.surface
+      .split(',')
+      .map((s) => s.trim().replace(/^\.?\//, '').replace(/\/$/, ''))
+      .filter(Boolean);
 
-      // Si la regla declara ubicación exclusiva, cualquier ruta objetivo fuera de allowedPrefix viola la regla
-      if (
-        desc.includes('exclusivamente en') ||
-        desc.includes('exclusivo en') ||
-        desc.includes('only in') ||
-        desc.includes('no crear handlers en')
-      ) {
-        const isAllowed = normalized === allowedPrefix || normalized.startsWith(allowedPrefix + '/');
-        if (!isAllowed) {
-          return {
-            rule: inv,
-            reason: `La ruta "${normalized}" viola la ubicación exclusiva de handlers en "${inv.surface}".`,
-            source: 'invariant',
-          };
-        }
+    if (allowedPrefixes.length === 0) continue;
+
+    const isExclusiveRule =
+      desc.includes('exclusivamente en') ||
+      desc.includes('exclusivo en') ||
+      desc.includes('only in') ||
+      desc.includes('no crear handlers en') ||
+      desc.includes('viven exclusivamente') ||
+      desc.includes('solo en');
+
+    if (!isExclusiveRule) continue;
+
+    // Verificar si es un archivo de código relevante o handler
+    const isSourceCode = /\.(?:go|ts|tsx|js|jsx|py|rs|java|c|cpp|rb|php)$/i.test(normalized);
+    if (!isSourceCode) continue;
+
+    const isHttpRule = /(?:handler|controller|route|endpoint|http|transport)/i.test(inv.surface) || desc.includes('handler');
+    const isTargetFile = isHttpRule
+      ? /(?:handler|controller|route|endpoint|http|server|app|transport|grpc)/i.test(normalized) ||
+        (desc.includes('en main.go') && (normalized === 'main.go' || normalized.endsWith('/main.go'))) ||
+        (desc.includes('ni en pkg') && normalized.startsWith('pkg/')) ||
+        (desc.includes('ni en cmd') && normalized.startsWith('cmd/')) ||
+        (desc.includes('src/routes') && normalized.startsWith('src/routes/')) ||
+        (desc.includes('app/views') && normalized.startsWith('app/views/')) ||
+        (desc.includes('internal/core') && normalized.startsWith('internal/core/'))
+      : true;
+
+    if (isTargetFile) {
+      const isAllowed = allowedPrefixes.some(
+        (prefix) => normalized === prefix || normalized.startsWith(prefix + '/')
+      );
+      if (!isAllowed) {
+        return {
+          rule: inv,
+          reason: `La ruta "${normalized}" viola la ubicación exclusiva en "${inv.surface}".`,
+          source: 'invariant',
+        };
       }
     }
   }
@@ -467,14 +535,20 @@ export function checkPathViolation(
   // Check Never Rules for surface restrictions
   for (const never of neverRules) {
     if (never.surface && never.surface !== 'general' && never.surface !== 'dependencies') {
-      const forbiddenSurface = never.surface.replace(/^\.?\//, '').replace(/\/$/, '');
-      const isForbidden = normalized === forbiddenSurface || normalized.startsWith(forbiddenSurface + '/');
-      if (isForbidden) {
-        return {
-          rule: never,
-          reason: `La ruta "${normalized}" escribe dentro de la superficie prohibida "${never.surface}".`,
-          source: 'never',
-        };
+      const forbiddenSurfaces = never.surface
+        .split(',')
+        .map((s) => s.trim().replace(/^\.?\//, '').replace(/\/$/, ''))
+        .filter(Boolean);
+
+      for (const forbiddenSurface of forbiddenSurfaces) {
+        const isForbidden = normalized === forbiddenSurface || normalized.startsWith(forbiddenSurface + '/');
+        if (isForbidden) {
+          return {
+            rule: never,
+            reason: `La ruta "${normalized}" escribe dentro de la superficie prohibida "${never.surface}".`,
+            source: 'never',
+          };
+        }
       }
     }
   }

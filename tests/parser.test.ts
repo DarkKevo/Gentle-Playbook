@@ -3,6 +3,8 @@ import {
   parsePlaybook,
   serializePlaybook,
   formatPlaybookForSystemPrompt,
+  formatPlaybookForTool,
+  formatPlaybookForDisplay,
   sanitizeRuleText,
 } from '../src/core/parser.js';
 import { Playbook } from '../src/core/schema.js';
@@ -210,5 +212,57 @@ func RateLimiter() gin.HandlerFunc {
     const formatted = formatPlaybookForSystemPrompt(playbookWithMaliciousAttr);
     // El tag debe mantener la integridad estructural de los atributos sin que se rompan las comillas dobles
     expect(formatted).toContain(`<convention id="rule-breakout" surface="src/' fake-attribute='payload' breakout='true">`);
+  });
+
+  it('should support bidirectional surface filtering in formatPlaybookForTool (JD-A-003)', () => {
+    const playbook: Playbook = {
+      language: 'go',
+      version: 1,
+      updatedAt: '2026-09-29',
+      topology: { pattern: 'Hexagonal', directories: ['internal/ports/httpserver'] },
+      invariants: [
+        {
+          id: 'http-handlers',
+          type: 'invariant',
+          title: 'Handlers HTTP',
+          surface: 'internal/ports/httpserver',
+          description: 'Handlers en ports.',
+        },
+      ],
+      askRules: [],
+      neverRules: [],
+      snippets: [],
+    };
+
+    // Query con path específico de archivo dentro de la superficie
+    const formatted = formatPlaybookForTool(playbook, 'internal/ports/httpserver/auth.go');
+    expect(formatted).toContain('http-handlers');
+    expect(formatted).toContain('internal/ports/httpserver');
+  });
+
+  it('should include neverRules in formatPlaybookForDisplay for Agent Preferences (JD-A-010)', () => {
+    const agentPb: Playbook = {
+      language: 'agents-preferences',
+      version: 1,
+      updatedAt: '2026-09-29',
+      topology: { pattern: 'Agent Runtime', directories: [] },
+      invariants: [],
+      askRules: [],
+      neverRules: [
+        {
+          id: 'no-rm-rf',
+          type: 'never',
+          title: 'No rm -rf',
+          surface: 'tools:bash',
+          description: 'No ejecutar rm -rf sin confirmación.',
+        },
+      ],
+      snippets: [],
+    };
+
+    const display = formatPlaybookForDisplay(agentPb);
+    expect(display).toContain('Acciones y Prácticas Vetadas (Nunca)');
+    expect(display).toContain('no-rm-rf');
+    expect(display).toContain('tools:bash');
   });
 });

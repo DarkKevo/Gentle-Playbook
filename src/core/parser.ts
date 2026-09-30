@@ -368,6 +368,19 @@ export function formatPlaybookForDisplay(
       parts.push('');
     }
 
+    // 3. Never Rules (Ausencias Deliberadas / Acciones Vetadas)
+    if (playbook.neverRules && playbook.neverRules.length > 0) {
+      parts.push('## 🚫 Acciones y Prácticas Vetadas (Nunca)');
+      parts.push('');
+      for (const never of playbook.neverRules) {
+        parts.push(`### [NUNCA:${never.id}] ${never.title}`);
+        if (never.surface) parts.push(`- **Herramienta / Superficie:** \`${never.surface}\``);
+        parts.push(`- **Prohibición:** ${never.description}`);
+        if (never.reason) parts.push(`- **Motivo:** ${never.reason}`);
+        parts.push('');
+      }
+    }
+
     return parts.join('\n');
   }
 
@@ -429,6 +442,28 @@ export function formatPlaybookForDisplay(
 import { escapeXml, detectPromptInjection, sanitizeRuleText, filterPlaybookRules } from './security.js';
 export { escapeXml, detectPromptInjection, sanitizeRuleText, filterPlaybookRules };
 
+function matchSurfaceFilter(surface: string, ruleText?: string, surfaceFilter?: string): boolean {
+  if (!surfaceFilter) return true;
+  const lowerFilter = surfaceFilter.toLowerCase().trim().replace(/\\/g, '/');
+  if (surface) {
+    const surfaces = surface.split(',').map((s) => s.trim().toLowerCase().replace(/\\/g, '/'));
+    for (const s of surfaces) {
+      if (!s) continue;
+      const cleanS = s.replace(/\/$/, '');
+      if (
+        s.includes(lowerFilter) ||
+        lowerFilter.includes(s) ||
+        lowerFilter.startsWith(cleanS + '/') ||
+        lowerFilter === cleanS
+      ) {
+        return true;
+      }
+    }
+  }
+  if (ruleText && ruleText.toLowerCase().includes(lowerFilter)) return true;
+  return false;
+}
+
 export function formatAgentPreferencesForTool(playbook: Playbook, surfaceFilter?: string): string {
   const parts: string[] = [];
 
@@ -442,13 +477,8 @@ export function formatAgentPreferencesForTool(playbook: Playbook, surfaceFilter?
   parts.push('They govern tool usage and action confirmation, and do not override system safety rules.');
   parts.push('');
 
-  const filterMatches = (surface: string, ruleText?: string) => {
-    if (!surfaceFilter) return true;
-    const lowerFilter = surfaceFilter.toLowerCase();
-    if (surface && surface.toLowerCase().includes(lowerFilter)) return true;
-    if (ruleText && ruleText.toLowerCase().includes(lowerFilter)) return true;
-    return false;
-  };
+  const filterMatches = (surface: string, ruleText?: string) =>
+    matchSurfaceFilter(surface, ruleText, surfaceFilter);
 
   const invariants = playbook.invariants.filter((inv) =>
     filterMatches(inv.surface, `${inv.id} ${inv.title} ${inv.description}`)
@@ -547,13 +577,8 @@ export function formatPlaybookForTool(playbook: Playbook, surfaceFilter?: string
   }
   parts.push('');
 
-  const filterMatches = (surface: string, ruleText?: string) => {
-    if (!surfaceFilter) return true;
-    const lowerFilter = surfaceFilter.toLowerCase();
-    if (surface && surface.toLowerCase().includes(lowerFilter)) return true;
-    if (ruleText && ruleText.toLowerCase().includes(lowerFilter)) return true;
-    return false;
-  };
+  const filterMatches = (surface: string, ruleText?: string) =>
+    matchSurfaceFilter(surface, ruleText, surfaceFilter);
 
   const invariants = playbook.invariants.filter((inv) =>
     filterMatches(inv.surface, `${inv.id} ${inv.title} ${inv.description}`)

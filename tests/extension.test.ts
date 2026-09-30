@@ -1137,7 +1137,7 @@ extracted: 2026-03-30
       expect(event.text).toContain('[DIRECTIVA DE GOBERNANZA PLAYBOOK]');
       expect(event.text).toContain('El usuario autorizó aplicar la regla [ASK:PUBLIC-RATE-LIMIT]');
       expect(event.text).toContain('INCLUYE el extra aprobado');
-      expect(res).toEqual({ action: 'continue' });
+      expect(res).toEqual({ action: 'transform', text: event.text });
     });
 
     it('should trigger Ask confirmation in input hook and append negative directive when user says No without starving base feature', async () => {
@@ -1154,7 +1154,7 @@ extracted: 2026-03-30
       expect(event.text).toContain('[DIRECTIVA DE GOBERNANZA PLAYBOOK]');
       expect(event.text).toContain('El usuario declinó aplicar el extra');
       expect(event.text).toContain('pero NO apliques el extra (No agregar rate limiter.)');
-      expect(res).toEqual({ action: 'continue' });
+      expect(res).toEqual({ action: 'transform', text: event.text });
     });
 
     it('should apply default action without starving base feature when running in headless / without UI', async () => {
@@ -1169,7 +1169,7 @@ extracted: 2026-03-30
       expect(event.text).toContain('[DIRECTIVA DE GOBERNANZA PLAYBOOK]: Ejecución desatendida');
       expect(event.text).toContain('No agregar rate limiter.');
       expect(event.text).toContain('Implementa completamente el requerimiento base solicitado');
-      expect(res).toEqual({ action: 'continue' });
+      expect(res).toEqual({ action: 'transform', text: event.text });
     });
 
     it('should NOT silence turn in headless on folder/kit conflict, redirecting to canonical surface with visible notice', async () => {
@@ -1185,7 +1185,7 @@ extracted: 2026-03-30
       expect(event.text).toContain('HTTP-HANDLERS-PORTS');
       expect(event.text).toContain('internal/ports/httpserver/');
       expect(event.text).toContain('Detalla esta decisión al inicio de tu respuesta.');
-      expect(res).toEqual({ action: 'continue' });
+      expect(res).toEqual({ action: 'transform', text: event.text });
     });
 
     it('should block bypass attempts in headless with explicit non-silent error notification', async () => {
@@ -1204,6 +1204,70 @@ extracted: 2026-03-30
         expect.stringContaining('No se permite omitir puntos de control ("sin consultar")'),
         'error'
       );
+    });
+
+    it('should enforce agent governance restrictions on tool_call for tools:write (JD-A-002)', async () => {
+      // Guardar preferencia de gobernanza de agente
+      const agentPb: Playbook = {
+        language: 'agents-preferences',
+        version: 1,
+        updatedAt: '2026-09-29',
+        topology: { pattern: 'Agent Runtime', directories: [] },
+        invariants: [
+          {
+            id: 'require-write-confirm',
+            type: 'invariant',
+            title: 'Confirmar escritura',
+            surface: 'tools:write',
+            description: 'No escribir sin confirmación interactiva.',
+          },
+        ],
+        askRules: [],
+        snippets: [],
+      };
+      await storage.savePlaybook(agentPb);
+
+      const confirmMock = vi.fn().mockResolvedValue(false);
+      const notifyMock = vi.fn();
+      const ctx = {
+        cwd: tempDir,
+        ui: { confirm: confirmMock, notify: notifyMock },
+      };
+
+      const res = await listeners['tool_call'](
+        { toolName: 'write', input: { path: 'internal/ports/httpserver/health.go', content: 'test' } },
+        ctx
+      );
+
+      expect(confirmMock).toHaveBeenCalledTimes(1);
+      expect(confirmMock).toHaveBeenCalledWith(
+        expect.stringContaining('Supervisión de Agente'),
+        expect.stringContaining('REQUIRE-WRITE-CONFIRM')
+      );
+      expect(res).toEqual({
+        block: true,
+        reason: expect.stringContaining('REQUIRE-WRITE-CONFIRM'),
+      });
+    });
+
+    it('should reject /playbook delete when --rule is passed without rule ID and prevent whole playbook deletion (JD-A-011)', async () => {
+      const notifyMock = vi.fn();
+      const ctx = {
+        cwd: tempDir,
+        ui: { notify: notifyMock },
+      };
+
+      // Invocación con --rule seguido de --yes sin el ID
+      await commands['playbook'].handler('delete go --rule --yes', ctx);
+
+      expect(notifyMock).toHaveBeenCalledWith(
+        expect.stringContaining('El flag --rule requiere el ID de la regla'),
+        'error'
+      );
+
+      // El playbook de go DEBE seguir existiendo intacto en storage
+      const pbStillExists = await storage.exists('go');
+      expect(pbStillExists).toBe(true);
     });
   });
 });
