@@ -694,5 +694,110 @@ Sin embargo, viola la regla arquitectónica:
       expect(matchFramework).not.toBeNull();
       expect(matchFramework?.rule.id).toBe('no-gin');
     });
+
+    it('should distinguish echo when listed in parentheses from plain echo payload verb', () => {
+      const pbWithParenEcho: Playbook = {
+        language: 'go',
+        version: 1,
+        updatedAt: '2026-09-29',
+        topology: { pattern: 'Hexagonal', directories: ['internal/ports/httpserver'] },
+        invariants: [],
+        askRules: [],
+        neverRules: [
+          {
+            id: 'no-routers',
+            type: 'never',
+            title: 'No routers externos',
+            surface: 'dependencies',
+            description: 'No usar routers de terceros (Chi, Echo, Fiber); usar net/http.',
+          },
+        ],
+        snippets: [],
+      };
+
+      expect(checkPromptViolation('hacé un handler que haga echo del body', pbWithParenEcho)).toBeNull();
+      expect(checkPromptViolation('usar framework echo para el router', pbWithParenEcho)).not.toBeNull();
+    });
+
+    it('should match multi-word parenthesized tokens like Gorilla Mux with spaces', () => {
+      const pbWithGorilla: Playbook = {
+        language: 'go',
+        version: 1,
+        updatedAt: '2026-09-29',
+        topology: { pattern: 'Hexagonal', directories: ['internal/ports/httpserver'] },
+        invariants: [],
+        askRules: [],
+        neverRules: [
+          {
+            id: 'no-routers',
+            type: 'never',
+            title: 'No routers externos',
+            surface: 'dependencies',
+            description: 'No usar routers (Chi, Fiber, Gorilla Mux).',
+          },
+        ],
+        snippets: [],
+      };
+
+      const match = checkPromptViolation('quiero armar las rutas con Gorilla Mux', pbWithGorilla);
+      expect(match).not.toBeNull();
+      expect(match?.rule.id).toBe('no-routers');
+    });
+
+    it('should NOT treat auxiliary verbs like "usar" or "framework" as prohibited keywords', () => {
+      const pbWithAuxVerbs: Playbook = {
+        language: 'go',
+        version: 1,
+        updatedAt: '2026-09-29',
+        topology: { pattern: 'Hexagonal', directories: ['internal/ports/httpserver'] },
+        invariants: [],
+        askRules: [],
+        neverRules: [
+          {
+            id: 'no-gorm',
+            type: 'never',
+            title: 'No GORM',
+            surface: 'dependencies',
+            description: 'Evitar usar librerías externas o frameworks pesados como GORM.',
+          },
+        ],
+        snippets: [],
+      };
+
+      // "quiero usar net/http" must NOT be blocked claiming "usar" is forbidden
+      expect(checkPromptViolation('quiero usar net/http de la biblioteca estándar', pbWithAuxVerbs)).toBeNull();
+    });
+
+    it('should detect "sin confirmación" or "hacelo sin confirmacion" as checkpoint bypass', () => {
+      expect(checkPromptViolation('hacelo sin confirmación', samplePlaybook)).not.toBeNull();
+      expect(checkPromptViolation('proceder de una sin confirmacion', samplePlaybook)).not.toBeNull();
+    });
+
+    it('should trigger public-rate-limit ask for public OAuth token endpoints', () => {
+      const httpPb: Playbook = {
+        language: 'go',
+        version: 1,
+        updatedAt: '2026-09-29',
+        topology: { pattern: 'Hexagonal', directories: ['internal/ports/httpserver'] },
+        invariants: [],
+        askRules: [
+          {
+            id: 'public-rate-limit',
+            type: 'ask',
+            title: 'Rate limit en rutas públicas',
+            surface: 'internal/ports/httpserver',
+            trigger: 'Creación de endpoints HTTP públicos sin autenticación (por ejemplo POST /login o POST /register).',
+            antiTrigger: 'Rutas autenticadas, health checks o internas.',
+            prompt: 'Este endpoint es público. ¿Aplicamos el rate limiter estándar del playbook?',
+            defaultAction: 'No agregar rate limiter.',
+          },
+        ],
+        snippets: [],
+      };
+
+      const match = checkAskTrigger('Crear endpoint público POST /oauth/token para intercambio de credenciales', httpPb);
+      expect(match).not.toBeNull();
+      expect(match?.rule.id).toBe('public-rate-limit');
+    });
   });
 });

@@ -219,7 +219,7 @@ export function checkPromptViolation(
 
   // 2. Check bypass attempts on Confirmation Checkpoints (Caso 21: "no preguntes", "sin consultar")
   const bypassCheckpoints =
-    /\b(?:sin\s+(?:preguntar|consultar|confirmar|pedir\s+confirmaci[oó]n)|no\s+(?:me\s+)?(?:preguntes|consultes|pidas\s+confirmaci[oó]n)|without\s+asking|don't\s+ask|no\s+confirm|skip\s+confirm(?:ation)?|auto-confirm)\b/i;
+    /\b(?:sin\s+(?:preguntar|consultar|confirmar|confirmaci[oó]n|pedir\s+confirmaci[oó]n)|no\s+(?:me\s+)?(?:preguntes|consultes|pidas\s+confirmaci[oó]n)|without\s+asking|don't\s+ask|no\s+confirm|without\s+confirm(?:ation)?|skip\s+confirm(?:ation)?|auto-confirm)\b/i;
   if (bypassCheckpoints.test(lowerPrompt)) {
     const isAgent = playbook.language === 'agents-preferences' || playbook.language === 'agents';
     const targetAsk =
@@ -260,9 +260,19 @@ export function checkPromptViolation(
           .map((t) => t.trim().toLowerCase())
           .filter(Boolean);
         for (const token of tokens) {
-          const cleanToken = token.replace(/[^a-z0-9_\-\/]/g, '');
-          if (cleanToken.length >= 3 && !['etc', 'como', 'otros', 'otras'].includes(cleanToken)) {
-            const tokenRegex = new RegExp(`\\b${cleanToken}(?:s|es)?\\b`, 'i');
+          const cleanToken = token.replace(/[^a-z0-9_\-\/\s]/g, '').trim().replace(/\s+/g, ' ');
+          if (cleanToken.length >= 3 && !['etc', 'como', 'otros', 'otras', 'salvo', 'excepto'].includes(cleanToken)) {
+            // Guard para evitar colisión de "echo" como sustantivo/verbo
+            if (cleanToken === 'echo') {
+              const isEchoFramework = /\b(?:con\s+echo|usando\s+echo|framework\s+echo|router\s+echo|labstack\/echo|echo\s+(?:framework|router))\b/i.test(lowerPrompt);
+              if (!isEchoFramework) continue;
+            }
+
+            const tokenPattern = cleanToken.includes(' ')
+              ? cleanToken.split(' ').map((p) => p.replace(/[\/\\^$*+?.()|[\]{}]/g, '\\$&')).join('\\s+')
+              : cleanToken.replace(/[\/\\^$*+?.()|[\]{}]/g, '\\$&') + '(?:s|es)?';
+
+            const tokenRegex = new RegExp(`\\b${tokenPattern}\\b`, 'i');
             if (tokenRegex.test(lowerPrompt)) {
               return {
                 rule: never,
@@ -281,7 +291,11 @@ export function checkPromptViolation(
       const stopWords = new Set([
         'el', 'la', 'los', 'las', 'un', 'una', 'unos', 'unas',
         'cualquier', 'otros', 'otras', 'otro', 'otra',
-        'por', 'para', 'de', 'del', 'con', 'en', 'ejemplo', 'ejemplos', 'salvo', 'excepto'
+        'por', 'para', 'de', 'del', 'con', 'en', 'ejemplo', 'ejemplos', 'salvo', 'excepto',
+        'usar', 'uso', 'utilizar', 'utilices', 'meter', 'poner', 'agregar', 'instalar',
+        'framework', 'frameworks', 'libreria', 'librerias', 'librería', 'librerías',
+        'paquete', 'paquetes', 'herramienta', 'herramientas', 'modulo', 'modulos', 'módulo', 'módulos',
+        'externo', 'externos', 'externa', 'externas', 'pesado', 'pesados', 'pesada', 'pesadas'
       ]);
       for (const m of matchWords) {
         const targetWord = m[1].toLowerCase();
@@ -493,8 +507,8 @@ export function checkAskTrigger(
       }
 
       // Rutas autenticadas, tokens, bearer, me
-      // Excluir endpoints de emisión de credenciales (login, signup, register) para no suprimir falsamente los asks públicos
-      const isCredentialIssuing = /\b(?:login|signup|register|registro|iniciar\s+sesi[oó]n)\b/i.test(lowerPrompt);
+      // Excluir endpoints de emisión de credenciales (login, signup, register, oauth, token) para no suprimir falsamente los asks públicos
+      const isCredentialIssuing = /\b(?:login|signup|register|registro|iniciar\s+sesi[oó]n|oauth|token)\b/i.test(lowerPrompt);
       const isAuth =
         !isCredentialIssuing &&
         /\b(?:autenticad[oa]s?|bearer|jwt|token|auth|privad[oa]s?|intern[ao]s?|\/me)\b/i.test(lowerPrompt);
