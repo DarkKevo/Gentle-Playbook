@@ -239,8 +239,47 @@ O si no hay conflicto:
   }
 
   const violation = checkPromptViolation(promptText, playbook);
-  const triggeredAsk = violation ? null : checkAskTrigger(promptText, playbook);
+  const isQuery = isQueryOrExploratoryPrompt(promptText);
+  const triggeredAsk = violation || isQuery ? null : checkAskTrigger(promptText, playbook);
   return { violation, triggeredAsk };
+}
+
+/**
+ * Detects if a prompt is an informational, exploratory, or migration query
+ * rather than an implementation command requesting the prohibited technology.
+ */
+export function isQueryOrExploratoryPrompt(promptText: string): boolean {
+  if (!promptText) return false;
+  const lower = promptText.toLowerCase().trim();
+
+  // 1. Preguntas directas sobre justificación arquitectónica o reglas
+  if (
+    /\b(?:por\s+qu[eé]|why)\s+(?:no\s+usamos|no\s+se\s+usa|est[aá]\s+prohibido|se\s+proh[ií]be|evitamos|se\s+evita|est[aá]\s+vetado|se\s+veta|no\s+est[aá]\s+permitido)\b/i.test(lower) ||
+    /\b(?:why\s+(?:don't\s+we\s+use|is\s+it\s+forbidden|is\s+\w+\s+forbidden|do\s+we\s+avoid|not\s+use))\b/i.test(lower) ||
+    /\b(?:cu[aá]l\s+es\s+la\s+raz[oó]n|cu[aá]l\s+es\s+el\s+motivo|what\s+is\s+the\s+reason)\s+(?:de\s+no\s+usar|para\s+no\s+usar|de\s+evitar|de\s+prohibir|for\s+not\s+using|to\s+avoid)\b/i.test(lower)
+  ) {
+    return true;
+  }
+
+  // 2. Comparativas, pros y contras, alternativas o debate teórico
+  if (
+    /\b(?:diferencias?\s+entre|difference\s+between|pros\s+y\s+contras|pros\s+and\s+cons|comparar|comparativa|versus|\bvs\.?\b)\b/i.test(lower) ||
+    /\b(?:qu[eé]\s+ventajas?\s+tiene|what\s+are\s+the\s+benefits)\b/i.test(lower) ||
+    /\b(?:qu[eé]\s+opin[aá]s\s+de|qu[eé]\s+te\s+parece|what\s+do\s+you\s+think\s+(?:of|about))\b/i.test(lower) ||
+    /\b(?:alternativas?\s+a|alternatives?\s+to)\b/i.test(lower)
+  ) {
+    return true;
+  }
+
+  // 3. Migración de salida (alejarse de la tecnología prohibida hacia la recomendada)
+  if (
+    /\b(?:c[oó]mo\s+migrar\s+(?:de|desde)|how\s+to\s+migrate\s+from|migrando\s+(?:de|desde)|migraci[oó]n\s+(?:de|desde))\b/i.test(lower) ||
+    /\b(?:reemplazar|eliminar|remover|quitar|deprecar|sacar)\s+(?:el\s+|la\s+|a\s+)?(?:framework|librer[ií]a|orm|paquete)?\s*[a-zA-Z0-9_\-\/]+\s+(?:por|para\s+usar)\b/i.test(lower)
+  ) {
+    return true;
+  }
+
+  return false;
 }
 
 /**
@@ -299,6 +338,12 @@ export function checkPromptViolation(
         kind: 'checkpoint_bypass',
       };
     }
+  }
+
+  // Si el prompt es una consulta puramente exploratoria o teórica (preguntas de por qué, comparativas, migración de salida),
+  // no debe tratarse como una orden de implementación que viole neverRules o invariants.
+  if (isQueryOrExploratoryPrompt(promptText)) {
+    return null;
   }
 
   // 3. Check Never Rules (Deliberate prohibitions and categorical targets)

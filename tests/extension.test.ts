@@ -1063,6 +1063,59 @@ extracted: 2026-03-30
       expect(result).toEqual({ action: 'continue' });
     });
 
+    it('should execute input pre-flight deterministically without calling modelRegistry.complete even when model is provided', async () => {
+      const confirmMock = vi.fn().mockResolvedValue(true);
+      const modelCompleteMock = vi.fn();
+
+      const ctx = {
+        cwd: tempDir,
+        model: { id: 'gemini-3.8-flash' },
+        modelRegistry: {
+          complete: modelCompleteMock,
+        },
+        ui: {
+          confirm: confirmMock,
+        },
+      };
+
+      const result = await listeners['input'](
+        { text: 'creame un servidor usando el framework Gin' },
+        ctx
+      );
+
+      // El chequeo debe ejecutarse en memoria, confirmando la violación de Gin sin llamar jamás a la API del modelo
+      expect(modelCompleteMock).not.toHaveBeenCalled();
+      expect(confirmMock).toHaveBeenCalledTimes(1);
+      expect(confirmMock).toHaveBeenCalledWith(
+        expect.stringContaining('Conflicto con Playbook'),
+        expect.stringContaining('NO-GIN')
+      );
+      expect(result).toEqual({ action: 'continue' });
+    });
+
+    it('should pass informational questions mentioning prohibited tech without triggering confirmation dialog', async () => {
+      const confirmMock = vi.fn();
+      const modelCompleteMock = vi.fn();
+
+      const ctx = {
+        cwd: tempDir,
+        model: { id: 'gemini-3.8-flash' },
+        modelRegistry: {
+          complete: modelCompleteMock,
+        },
+        ui: { confirm: confirmMock },
+      };
+
+      const result = await listeners['input'](
+        { text: '¿Por qué no usamos Gin en este proyecto?' },
+        ctx
+      );
+
+      expect(modelCompleteMock).not.toHaveBeenCalled();
+      expect(confirmMock).not.toHaveBeenCalled();
+      expect(result).toEqual({ action: 'continue' });
+    });
+
     it('should block write tool_call when path violates invariant and user rejects', async () => {
       const confirmMock = vi.fn().mockResolvedValue(false);
       const notifyMock = vi.fn();

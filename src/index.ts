@@ -1125,32 +1125,12 @@ export default function (pi: ExtensionAPI) {
 
       if (playbooksToCheck.length === 0) return { action: 'continue' };
 
-      // Si hay modelo disponible en Pi, usamos el Agente para la evaluación semántica real
-      let completePrompt: ((prompt: string) => Promise<string>) | undefined;
-      if (ctx?.modelRegistry && ctx?.model) {
-        completePrompt = async (p: string) => {
-          const completion = await ctx.modelRegistry.complete(ctx.model, {
-            messages: [{ role: 'user', content: p }],
-          });
-          return (
-            completion?.content
-              ?.filter((c: any) => c.type === 'text')
-              .map((c: any) => c.text || '')
-              .join('') || ''
-          );
-        };
-      }
-
+      // El pre-vuelo en input es estrictamente determinístico y ultra-rápido en memoria (<1ms).
+      // No invoca APIs de LLM síncronas para evitar bloquear el event loop de la UI de Pi.
       const originalText = promptText;
 
       for (const pb of playbooksToCheck) {
-        let evaluation: PromptEvaluationResult;
-        if (completePrompt) {
-          evaluation = await evaluatePromptFull(promptText, pb, completePrompt);
-        } else {
-          evaluation = await evaluatePromptFull(promptText, pb);
-        }
-
+        const evaluation = await evaluatePromptFull(promptText, pb);
         const violation = evaluation.violation;
 
         if (violation) {

@@ -4,6 +4,7 @@ import {
   checkPathViolation,
   evaluatePromptSemantically,
   checkAskTrigger,
+  isQueryOrExploratoryPrompt,
 } from '../src/core/checker.js';
 import { Playbook } from '../src/core/schema.js';
 
@@ -179,6 +180,28 @@ describe('Playbook Violation Checker', () => {
     it('should return null for compliant or neutral prompt', () => {
       const match = checkPromptViolation('creá un endpoint /health con net/http que devuelva ok', samplePlaybook);
       expect(match).toBeNull();
+    });
+
+    it('should not flag informational or theoretical questions mentioning prohibited tech (false-positive prevention)', () => {
+      // Preguntas de justificación arquitectónica
+      expect(checkPromptViolation('¿Por qué no usamos Gin en este proyecto?', samplePlaybook)).toBeNull();
+      expect(checkPromptViolation('¿Por qué está prohibido GORM?', samplePlaybook)).toBeNull();
+      expect(checkPromptViolation('Why do we avoid Gin?', samplePlaybook)).toBeNull();
+
+      // Comparativas y pros/contras
+      expect(checkPromptViolation('Explicame las diferencias entre Chi y net/http', samplePlaybook)).toBeNull();
+      expect(checkPromptViolation('Qué opinás de Gin vs net/http?', samplePlaybook)).toBeNull();
+      expect(checkPromptViolation('Cuáles son las alternativas a GORM en Go?', samplePlaybook)).toBeNull();
+
+      // Migraciones de salida
+      expect(checkPromptViolation('Cómo migrar de Chi a net/http', samplePlaybook)).toBeNull();
+      expect(checkPromptViolation('Quiero reemplazar GORM por SQL puro', samplePlaybook)).toBeNull();
+    });
+
+    it('should still flag implementation requests that ask to use prohibited tech', () => {
+      expect(checkPromptViolation('creame un servidor usando Gin', samplePlaybook)).not.toBeNull();
+      expect(checkPromptViolation('quiero consultar los usuarios usando GORM', samplePlaybook)).not.toBeNull();
+      expect(checkPromptViolation('armá el handler con Chi', samplePlaybook)).not.toBeNull();
     });
   });
 
