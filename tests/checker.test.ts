@@ -183,19 +183,55 @@ describe('Playbook Violation Checker', () => {
     });
 
     it('should not flag informational or theoretical questions mentioning prohibited tech (false-positive prevention)', () => {
+      // Preguntas de definición y conceptos
+      expect(checkPromptViolation('¿Qué es Gin?', samplePlaybook)).toBeNull();
+      expect(checkPromptViolation('What is Gin?', samplePlaybook)).toBeNull();
+      expect(checkPromptViolation('¿Cómo funciona Chi internamente?', samplePlaybook)).toBeNull();
+      expect(checkPromptViolation('Explicame qué hace GORM', samplePlaybook)).toBeNull();
+      expect(checkPromptViolation('Contame sobre Fiber', samplePlaybook)).toBeNull();
+      expect(checkPromptViolation('¿Quién creó Chi?', samplePlaybook)).toBeNull();
+      expect(checkPromptViolation('Documentación de GORM', samplePlaybook)).toBeNull();
+      expect(checkPromptViolation('¿GORM soporta SQLite?', samplePlaybook)).toBeNull();
+      expect(checkPromptViolation('Can you explain GORM to me?', samplePlaybook)).toBeNull();
+      expect(checkPromptViolation('No entiendo qué es Gin', samplePlaybook)).toBeNull();
+      expect(checkPromptViolation('Mostrame ejemplos de código en Gin solo para aprender', samplePlaybook)).toBeNull();
+      expect(checkPromptViolation('¿Chi sigue teniendo soporte?', samplePlaybook)).toBeNull();
+
       // Preguntas de justificación arquitectónica
       expect(checkPromptViolation('¿Por qué no usamos Gin en este proyecto?', samplePlaybook)).toBeNull();
       expect(checkPromptViolation('¿Por qué está prohibido GORM?', samplePlaybook)).toBeNull();
       expect(checkPromptViolation('Why do we avoid Gin?', samplePlaybook)).toBeNull();
+      expect(checkPromptViolation('¿Por qué Gin es tan rápido?', samplePlaybook)).toBeNull();
+      expect(checkPromptViolation('Why is Gin popular?', samplePlaybook)).toBeNull();
 
       // Comparativas y pros/contras
       expect(checkPromptViolation('Explicame las diferencias entre Chi y net/http', samplePlaybook)).toBeNull();
       expect(checkPromptViolation('Qué opinás de Gin vs net/http?', samplePlaybook)).toBeNull();
       expect(checkPromptViolation('Cuáles son las alternativas a GORM en Go?', samplePlaybook)).toBeNull();
 
-      // Migraciones de salida
+      // Migraciones de salida hacia la librería estándar o SQL puro
       expect(checkPromptViolation('Cómo migrar de Chi a net/http', samplePlaybook)).toBeNull();
+      expect(checkPromptViolation('Cómo migrar de Gin a net/http', samplePlaybook)).toBeNull();
       expect(checkPromptViolation('Quiero reemplazar GORM por SQL puro', samplePlaybook)).toBeNull();
+      expect(checkPromptViolation('Reemplazar Gin por net/http', samplePlaybook)).toBeNull();
+    });
+
+    it('should detect compound prompts attempting to disguise implementation orders as questions (red team bypass defense)', () => {
+      // Brecha 1: Prefix / Compound Injection
+      expect(checkPromptViolation('¿Por qué no usamos Gin? Bueno, armalo con Gin', samplePlaybook)).not.toBeNull();
+      expect(checkPromptViolation('¿Por qué no usamos Gin? Bueno, instalá Gin y creá el servidor', samplePlaybook)).not.toBeNull();
+      expect(checkPromptViolation("Why don't we use Gin? Actually implement the router with Gin", samplePlaybook)).not.toBeNull();
+      expect(checkPromptViolation('Explicame las diferencias entre Chi y net/http y después implementá el server con Chi', samplePlaybook)).not.toBeNull();
+      expect(checkPromptViolation('Gin vs net/http: armalo con Gin', samplePlaybook)).not.toBeNull();
+      expect(checkPromptViolation('Chi vs net/http: hacelo con Chi', samplePlaybook)).not.toBeNull();
+      expect(checkPromptViolation('Alternativas a net/http: usá Gin', samplePlaybook)).not.toBeNull();
+      expect(checkPromptViolation('¿Qué opinás de Gin? Bueno, agregalo al proyecto', samplePlaybook)).not.toBeNull();
+      expect(checkPromptViolation('Pros y contras de GORM: agregá GORM al proyecto', samplePlaybook)).not.toBeNull();
+
+      // Brecha 2: Reverse Migration (migrar HACIA la librería prohibida o reemplazar la stdlib por la prohibida)
+      expect(checkPromptViolation('Cómo migrar de net/http a Gin', samplePlaybook)).not.toBeNull();
+      expect(checkPromptViolation('Cómo migrar de database/sql a GORM', samplePlaybook)).not.toBeNull();
+      expect(checkPromptViolation('Reemplazar net/http por Gin', samplePlaybook)).not.toBeNull();
     });
 
     it('should still flag implementation requests that ask to use prohibited tech', () => {

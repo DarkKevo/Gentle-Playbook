@@ -245,41 +245,179 @@ O si no hay conflicto:
 }
 
 /**
- * Detects if a prompt is an informational, exploratory, or migration query
- * rather than an implementation command requesting the prohibited technology.
+ * Detects whether a prompt contains an order or request to adopt, implement,
+ * install, configure, or migrate toward a specific target technology.
  */
-export function isQueryOrExploratoryPrompt(promptText: string): boolean {
-  if (!promptText) return false;
+export function isAdoptionRequestForTarget(promptText: string, targetToken: string): boolean {
+  if (!promptText || !targetToken) return false;
   const lower = promptText.toLowerCase().trim();
+  const escT = targetToken.toLowerCase().replace(/[\/\\^$*+?.()|[\]{}]/g, '\\$&');
 
-  // 1. Preguntas directas sobre justificación arquitectónica o reglas
+  // Educational / Learning guard:
+  // e.g. "Mostrame ejemplos de código en Gin solo para aprender", "código en Gin para aprender"
+  const isEducationalContext =
+    /\b(?:ejemplos?\s+de\s+c[oó]digo|code\s+examples?|solo\s+para\s+aprender|just\s+to\s+learn|para\s+estudiar|para\s+aprender|fines\s+educativos)\b/i.test(lower);
+  const cliticActionRegex =
+    /\b(?:armal[oa]|hacel[oa]|creal[oa]|implemental[oa]|instalal[oa]|agregal[oa]|usal[oa]|utilizal[oa]|metel[oa]|ponel[oa]|sumal[oa]|build\s+it|use\s+it|install\s+it|add\s+it)\b/i;
   if (
-    /\b(?:por\s+qu[eé]|why)\s+(?:no\s+usamos|no\s+se\s+usa|est[aá]\s+prohibido|se\s+proh[ií]be|evitamos|se\s+evita|est[aá]\s+vetado|se\s+veta|no\s+est[aá]\s+permitido)\b/i.test(lower) ||
-    /\b(?:why\s+(?:don't\s+we\s+use|is\s+it\s+forbidden|is\s+\w+\s+forbidden|do\s+we\s+avoid|not\s+use))\b/i.test(lower) ||
-    /\b(?:cu[aá]l\s+es\s+la\s+raz[oó]n|cu[aá]l\s+es\s+el\s+motivo|what\s+is\s+the\s+reason)\s+(?:de\s+no\s+usar|para\s+no\s+usar|de\s+evitar|de\s+prohibir|for\s+not\s+using|to\s+avoid)\b/i.test(lower)
+    isEducationalContext &&
+    !cliticActionRegex.test(lower) &&
+    !/\b(?:instal[aá]|agreg[aá]|al\s+proyecto|to\s+the\s+project)\b/i.test(lower)
   ) {
+    return false;
+  }
+
+  // 1. Direct use prepositions or commands with the target technology
+  // (e.g. "con gin", "usando gin", "usá gin", "en gin", "montado sobre chi")
+  const directUseRegex = new RegExp(
+    `\\b(?:con|with|usando|using|usar?|us[aá]|uses|utilizando|utilizar?|utiliza|utiliz[aá]|utilices|en|atop|(?:montad[oa]|montar?|mont[aá]|basad[oa]|basar?)\\s+(?:en|sobre))\\s+(?:el\\s+|la\\s+|un\\s+|una\\s+)?(?:framework\\s+|librer[ií]a\\s+|orm\\s+|router\\s+|paquete\\s+|package\\s+)?${escT}(?:s|es)?\\b`,
+    'i'
+  );
+  if (directUseRegex.test(lower)) {
+    // Negation guard: e.g. "sin gin", "no usar gin", "evitar gin", "no uses gin"
+    const negationRegex = new RegExp(
+      `\\b(?:sin|without|no\\s+(?:usar?|us[aá]|uses|utilizar?|utiliz[aá]|utilices|seguir)|evitar?|evita|evit[aá]|prohibir?|prohibid[oa])\\s+(?:el\\s+|la\\s+|un\\s+|una\\s+)?(?:framework\\s+|librer[ií]a\\s+|orm\\s+|router\\s+)?${escT}(?:s|es)?\\b`,
+      'i'
+    );
+    if (!negationRegex.test(lower)) {
+      return true;
+    }
+  }
+
+  // 2. Installation, adding, putting, or mounting actions targeting the technology
+  // (e.g. "instalá gin", "agregá gorm", "meter chi", "instalar fiber")
+  const installOrAddRegex = new RegExp(
+    `\\b(?:instal[aá]|instalar?|install(?:ing)?|agreg[aá]|agregar?|add(?:ing)?|met[eé]|meter?|pon[eé]|poner?|sum[aá]|sumar?|inclu[ií]|incluir?|include|mont[aá]|montar?)\\s+.*?(?:${escT}(?:s|es)?|al\\s+proyecto|to\\s+the\\s+project)\\b`,
+    'i'
+  );
+  if (installOrAddRegex.test(lower) && new RegExp(`\\b${escT}(?:s|es)?\\b`, 'i').test(lower)) {
     return true;
   }
 
-  // 2. Comparativas, pros y contras, alternativas o debate teórico
-  if (
-    /\b(?:diferencias?\s+entre|difference\s+between|pros\s+y\s+contras|pros\s+and\s+cons|comparar|comparativa|versus|\bvs\.?\b)\b/i.test(lower) ||
-    /\b(?:qu[eé]\s+ventajas?\s+tiene|what\s+are\s+the\s+benefits)\b/i.test(lower) ||
-    /\b(?:qu[eé]\s+opin[aá]s\s+de|qu[eé]\s+te\s+parece|what\s+do\s+you\s+think\s+(?:of|about))\b/i.test(lower) ||
-    /\b(?:alternativas?\s+a|alternatives?\s+to)\b/i.test(lower)
-  ) {
+  // 3. Creation / Implementation verbs combined with the target or clitic pronouns referring to it
+  // (e.g. "armalo con Gin", "hacelo con Chi", "creá el server con Gin", "implementalo con GORM", "agregalo al proyecto")
+  if (cliticActionRegex.test(lower) && new RegExp(`\\b${escT}(?:s|es)?\\b`, 'i').test(lower)) {
     return true;
   }
 
-  // 3. Migración de salida (alejarse de la tecnología prohibida hacia la recomendada)
-  if (
-    /\b(?:c[oó]mo\s+migrar\s+(?:de|desde)|how\s+to\s+migrate\s+from|migrando\s+(?:de|desde)|migraci[oó]n\s+(?:de|desde))\b/i.test(lower) ||
-    /\b(?:reemplazar|eliminar|remover|quitar|deprecar|sacar)\s+(?:el\s+|la\s+|a\s+)?(?:framework|librer[ií]a|orm|paquete)?\s*[a-zA-Z0-9_\-\/]+\s+(?:por|para\s+usar)\b/i.test(lower)
-  ) {
+  // Implementation / Creation verbs anywhere in the prompt targeting the tech
+  const creationActionRegex = new RegExp(
+    `\\b(?:armar?|arm[aá]|crear?|cre[aá]|hacer?|haz|hac[eé]|implementar?|implement[aá]|construir?|construy[eé]|build|create|implement|make)\\s+.*?(?:\\bcon\\b|\\busando\\b|\\busing\\b|\\bwith\\b|\\ben\\b|\\bsobre\\b).*?\\b${escT}(?:s|es)?\\b`,
+    'i'
+  );
+  if (creationActionRegex.test(lower)) {
+    return true;
+  }
+
+  // Role attribution: e.g. "Gin para el servidor", "servidor con Gin", "Gin como router", "usá Gin"
+  const roleRegex = new RegExp(
+    `\\b(?:${escT}(?:s|es)?\\s+(?:para|for|como|as)\\s+(?:el\\s+|la\\s+)?(?:servidor|server|router|orm|backend|api|proyecto|project)|(?:servidor|server|router|orm|backend|api|endpoint)\\s+(?:con|en|sobre|using|with)\\s+${escT}(?:s|es)?|us[aá]\\s+${escT}(?:s|es)?)\\b`,
+    'i'
+  );
+  if (roleRegex.test(lower)) {
+    return true;
+  }
+
+  // 4. Migration TO the target technology (Destination = targetToken)
+  // e.g. "migrar a Gin", "migrar hacia GORM", "migrate to Gin", "reemplazar net/http por Gin", "replace database/sql with GORM"
+  const migrateToRegex = new RegExp(
+    `\\b(?:migrar?|migraci[oó]n|migrate|migrating)\\s+.*?(?:\\ba\\b|\\bhacia\\b|\\bto\\b|\\binto\\b)\\s+(?:el\\s+|la\\s+)?(?:framework\\s+|orm\\s+)?${escT}(?:s|es)?\\b`,
+    'i'
+  );
+  if (migrateToRegex.test(lower)) {
+    return true;
+  }
+
+  const replaceWithRegex = new RegExp(
+    `\\b(?:reemplazar?|replace|cambiar?|change)\\s+.*?(?:\\bpor\\b|\\bwith\\b|\\bto\\b)\\s+(?:el\\s+|la\\s+)?(?:framework\\s+|orm\\s+)?${escT}(?:s|es)?\\b`,
+    'i'
+  );
+  if (replaceWithRegex.test(lower)) {
     return true;
   }
 
   return false;
+}
+
+/**
+ * Detects if the mention of a target technology in the prompt is purely informational,
+ * conceptual, educational, an exploratory inquiry, or an exit migration away from it.
+ */
+export function isExitMigrationOrInfoQuery(promptText: string, targetToken: string): boolean {
+  if (!promptText) return false;
+  const lower = promptText.toLowerCase().trim();
+  const escT = targetToken
+    ? targetToken.toLowerCase().replace(/[\/\\^$*+?.()|[\]{}]/g, '\\$&')
+    : '[a-zA-Z0-9_\\-\\/]+';
+
+  // 1. Definition / Explanation / Concepts / Capabilities
+  // (e.g. "¿Qué es Gin?", "What is Gin?", "¿Cómo funciona Chi?", "Explicame qué hace GORM", "Documentación de GORM", "¿GORM soporta SQLite?", "Contame sobre Fiber", "No entiendo qué es Gin")
+  const definitionAndInfoRegex =
+    /(?:^|[^\wáéíóúñ])(?:qu[eé]\s+es|what\s+is|qu[eé]\s+hace|what\s+does|c[oó]mo\s+funciona|how\s+does(?:\s+\w+)?\s+work|explicame|expl[ií]came|explain|contame|cu[eé]ntame|tell\s+me|documentaci[oó]n|docs?\s+(?:de|for)|qui[eé]n\s+cre[oó]|who\s+created|qui[eé]n\s+mantiene|who\s+maintains|soporta|support|no\s+entiendo\s+qu[eé]|ejemplos?\s+de\s+c[oó]digo|code\s+examples?|solo\s+para\s+aprender|just\s+to\s+learn|tutorial|historia|history|can\s+you\s+explain|sigue\s+teniendo\s+soporte|is\s+\w+\s+(?:maintained|deprecated)|est[aá]\s+(?:obsolet[oa]|deprecad[oa]))(?=[^\wáéíóúñ]|$)/i;
+  if (definitionAndInfoRegex.test(lower)) {
+    return true;
+  }
+
+  // 2. Architectural rationale / Why questions
+  // (e.g. "¿Por qué no usamos Gin?", "Why do we avoid Gin?", "¿Por qué Gin es tan rápido?", "Why is Gin popular?")
+  const whyQuestionsRegex = new RegExp(
+    `\\b(?:por\\s+qu[eé]|why)\\s+.*?(?:${escT}(?:s|es)?|no\\s+usamos|evitamos|prohibid|vetad|popular|r[aá]pido|fast)\\b`,
+    'i'
+  );
+  if (whyQuestionsRegex.test(lower)) {
+    return true;
+  }
+
+  const reasonQuestionsRegex =
+    /\b(?:cu[aá]l\s+es\s+la\s+raz[oó]n|cu[aá]l\s+es\s+el\s+motivo|what\s+is\s+the\s+reason)\b/i;
+  if (reasonQuestionsRegex.test(lower)) {
+    return true;
+  }
+
+  // 3. Comparisons, pros & cons, alternatives
+  // (e.g. "Diferencias entre Chi y net/http", "Pros y contras de GORM", "Alternativas a Gin")
+  const comparisonRegex =
+    /\b(?:diferencias?\s+entre|difference\s+between|pros\s+y\s+contras|pros\s+and\s+cons|comparar|comparativa|versus|\bvs\.?\b|alternativas?\s+a|alternatives?\s+to|qu[eé]\s+opin[aá]s\s+de|what\s+do\s+you\s+think\s+about)\b/i;
+  if (comparisonRegex.test(lower)) {
+    return true;
+  }
+
+  // 4. Exit migration: Migrating AWAY from targetToken to something else
+  // e.g. "Cómo migrar de Gin a net/http", "Reemplazar GORM por SQL puro", "Quitar Chi"
+  if (targetToken) {
+    const exitMigrationRegex = new RegExp(
+      `\\b(?:migrar?\\s+(?:de|desde|from)|migraci[oó]n\\s+(?:de|desde)|reemplazar?\\s+(?:el\\s+|la\\s+)?(?:framework\\s+|orm\\s+)?${escT}(?:s|es)?\\s+(?:por|with|para)|eliminar?\\s+${escT}|remover?\\s+${escT}|quitar?\\s+${escT}|sacar?\\s+${escT})\\b`,
+      'i'
+    );
+    if (exitMigrationRegex.test(lower)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Helper to determine if a matched prohibited target in the prompt should trigger a violation.
+ * Returns true if it represents an adoption request or an ordinary non-query mention.
+ * Returns false if it is purely informational/query or exit migration without adoption orders.
+ */
+export function shouldFlagProhibitedTarget(promptText: string, targetToken: string): boolean {
+  const isAdoption = isAdoptionRequestForTarget(promptText, targetToken);
+  const isInfo = isExitMigrationOrInfoQuery(promptText, targetToken);
+
+  if (isInfo && !isAdoption) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Detects if a prompt is an informational, exploratory, or migration query
+ * rather than an implementation command requesting the prohibited technology.
+ */
+export function isQueryOrExploratoryPrompt(promptText: string): boolean {
+  return isExitMigrationOrInfoQuery(promptText, '') && !isAdoptionRequestForTarget(promptText, '');
 }
 
 /**
@@ -340,12 +478,6 @@ export function checkPromptViolation(
     }
   }
 
-  // Si el prompt es una consulta puramente exploratoria o teórica (preguntas de por qué, comparativas, migración de salida),
-  // no debe tratarse como una orden de implementación que viole neverRules o invariants.
-  if (isQueryOrExploratoryPrompt(promptText)) {
-    return null;
-  }
-
   // 3. Check Never Rules (Deliberate prohibitions and categorical targets)
   if (playbook.neverRules && playbook.neverRules.length > 0) {
     for (const never of playbook.neverRules) {
@@ -356,12 +488,14 @@ export function checkPromptViolation(
         const idEscaped = idSubject.replace(/[\/\\^$*+?.()|[\]{}]/g, '\\$&');
         const regex = new RegExp(`\\b${idEscaped}(?:s|es)?\\b`, 'i');
         if (regex.test(lowerPrompt)) {
-          return {
-            rule: never,
-            reason: `El prompt solicita usar "${idSubject}", prohibido por la regla [${never.id.toUpperCase()}].`,
-            source: 'never',
-            kind: 'prohibited_dependency',
-          };
+          if (shouldFlagProhibitedTarget(lowerPrompt, idSubject)) {
+            return {
+              rule: never,
+              reason: `El prompt solicita usar "${idSubject}", prohibido por la regla [${never.id.toUpperCase()}].`,
+              source: 'never',
+              kind: 'prohibited_dependency',
+            };
+          }
         }
       }
 
@@ -392,12 +526,14 @@ export function checkPromptViolation(
 
             const tokenRegex = new RegExp(`\\b${tokenPattern}\\b`, 'i');
             if (tokenRegex.test(lowerPrompt)) {
-              return {
-                rule: never,
-                reason: `El prompt solicita "${cleanToken}", vetado en la categoría de la regla [${never.id.toUpperCase()}].`,
-                source: 'never',
-                kind: 'prohibited_dependency',
-              };
+              if (shouldFlagProhibitedTarget(lowerPrompt, cleanToken)) {
+                return {
+                  rule: never,
+                  reason: `El prompt solicita "${cleanToken}", vetado en la categoría de la regla [${never.id.toUpperCase()}].`,
+                  source: 'never',
+                  kind: 'prohibited_dependency',
+                };
+              }
             }
           }
         }
@@ -422,12 +558,14 @@ export function checkPromptViolation(
           const targetEscaped = targetWord.replace(/[\/\\^$*+?.()|[\]{}]/g, '\\$&');
           const regex = new RegExp(`\\b${targetEscaped}(?:s|es)?\\b`, 'i');
           if (regex.test(lowerPrompt)) {
-            return {
-              rule: never,
-              reason: `El prompt solicita "${targetWord}", prohibido por la regla [${never.id.toUpperCase()}].`,
-              source: 'never',
-              kind: 'prohibited_dependency',
-            };
+            if (shouldFlagProhibitedTarget(lowerPrompt, targetWord)) {
+              return {
+                rule: never,
+                reason: `El prompt solicita "${targetWord}", prohibido por la regla [${never.id.toUpperCase()}].`,
+                source: 'never',
+                kind: 'prohibited_dependency',
+              };
+            }
           }
         }
       }
@@ -476,12 +614,14 @@ export function checkPromptViolation(
               const memberEscaped = member.replace(/[\/\\^$*+?.()|[\]{}]/g, '\\$&');
               const memberRegex = new RegExp(`\\b${memberEscaped}(?:s|es)?\\b`, 'i');
               if (memberRegex.test(lowerPrompt)) {
-                return {
-                  rule: never,
-                  reason: `El prompt solicita "${member}", vetado por la regla [${never.id.toUpperCase()}] al pertenecer a la categoría de ${fam.description}.`,
-                  source: 'never',
-                  kind: 'prohibited_dependency',
-                };
+                if (shouldFlagProhibitedTarget(lowerPrompt, member)) {
+                  return {
+                    rule: never,
+                    reason: `El prompt solicita "${member}", vetado por la regla [${never.id.toUpperCase()}] al pertenecer a la categoría de ${fam.description}.`,
+                    source: 'never',
+                    kind: 'prohibited_dependency',
+                  };
+                }
               }
             }
           }
@@ -509,6 +649,14 @@ export function checkPromptViolation(
 
       for (const phrase of forbiddenPathPhrases) {
         if (phrase.regex.test(lowerPrompt) && desc.includes(phrase.forbiddenInDesc)) {
+          // Si el prompt es una consulta exploratoria o teórica (preguntas de por qué, explicame)
+          // y no contiene una orden imperativa de creación/escritura en esa ruta, no es violación
+          const isQueryAboutPath = /\b(?:por\s+qu[eé]|why|qu[eé]\s+es|what\s+is|explicame|explain|diferencia|pros\s+y\s+contras)\b/i.test(lowerPrompt);
+          const hasPathImplementation = /\b(?:cre[aá]|crear?|escrib[ií]|escribir?|arm[aá]|armar?|hac[eé]|hacer?|pon[eé]|poner?|met[eé]|meter?|coloc[aá]|colocar?|build|create|write|put)\s+.*?\b(?:en\s+main|en\s+pkg|en\s+cmd|en\s+src\/routes|en\s+src\/controllers|en\s+la\s+ra[ií]z)\b/i.test(lowerPrompt);
+          if (isQueryAboutPath && !hasPathImplementation) {
+            continue;
+          }
+
           return {
             rule: inv,
             reason: `El prompt solicita colocar código fuera de la superficie autorizada "${inv.surface}".`,
