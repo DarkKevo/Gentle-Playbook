@@ -881,5 +881,42 @@ Sin embargo, viola la regla arquitectónica:
 
       expect(() => checkPromptViolation('crear módulo en c++', pbSpecialChars)).not.toThrow();
     });
+
+    it('should prevent multi-layer write deadlock between exclusive domain and db layers (JD-B-001)', () => {
+      const multiLayerPlaybook: Playbook = {
+        language: 'go',
+        version: 1,
+        updatedAt: '2026-09-29',
+        topology: { pattern: 'Hexagonal', directories: [] },
+        invariants: [
+          {
+            id: 'domain-exclusive',
+            type: 'invariant',
+            title: 'Dominio exclusivo',
+            surface: 'internal/domain',
+            description: 'La lógica de negocio vive exclusivamente en internal/domain/. No poner reglas en la raíz.',
+          },
+          {
+            id: 'db-exclusive',
+            type: 'invariant',
+            title: 'Repositorios exclusivos',
+            surface: 'internal/adapters/db',
+            description: 'El acceso a base de datos vive exclusivamente en internal/adapters/db/.',
+          },
+        ],
+        askRules: [],
+        neverRules: [],
+        snippets: [],
+      };
+
+      // Escribir un archivo en la capa de persistencia NO debe ser bloqueado por la regla de dominio
+      expect(checkPathViolation('internal/adapters/db/user_repository.go', multiLayerPlaybook)).toBeNull();
+
+      // Escribir un archivo en la capa de dominio NO debe ser bloqueado por la regla de db
+      expect(checkPathViolation('internal/domain/user_entity.go', multiLayerPlaybook)).toBeNull();
+
+      // Pero escribir un archivo en una ruta no autorizada no declarada que coincida con el scope de la regla SÍ debe ser bloqueado
+      expect(checkPathViolation('pkg/unauthorized/domain_leak.go', multiLayerPlaybook)).not.toBeNull();
+    });
   });
 });

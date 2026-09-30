@@ -1157,9 +1157,9 @@ export default function (pi: ExtensionAPI) {
           const pbName = pb.language === AGENTS_PREFERENCES_ID ? 'Agents Preferences' : pb.language.toUpperCase();
           const ruleId = violation.rule.id.toUpperCase();
           const isBypass =
-            violation.reason.includes('sin consultar') ||
-            violation.reason.includes('ignorar las reglas') ||
-            violation.reason.includes('punto de control');
+            violation.kind === 'checkpoint_bypass' ||
+            violation.kind === 'playbook_bypass' ||
+            violation.kind === 'agent_governance_violation';
 
           // Caso 1: Intento explícito de eludir checkpoints o apagar el playbook
           if (isBypass) {
@@ -1276,40 +1276,77 @@ export default function (pi: ExtensionAPI) {
 
       if (playbooksToCheck.length === 0) return undefined;
 
-      // 1. Evaluar restricciones operativas de Agent Preferences en la herramienta (tools:write, tools:edit, tools:all)
+      // 1. Evaluar restricciones operativas de Agent Preferences en la herramienta (never, ask, invariants)
       if (agentPrefs) {
         const toolAction = event.toolName;
-        const matchingToolConstraints = (agentPrefs.invariants || []).filter((inv) => {
-          const s = (inv.surface || '').toLowerCase();
-          return (
-            s === 'tools:all' ||
-            s === `tools:${toolAction}` ||
-            s === 'tools:write' ||
-            s === 'tools:edit' ||
-            s === 'tools'
+        const isToolMatch = (ruleSurface?: string) => {
+          if (!ruleSurface) return false;
+          const surfaces = ruleSurface.toLowerCase().split(',').map((s) => s.trim());
+          return surfaces.some(
+            (s) =>
+              s === 'tools:all' ||
+              s === `tools:${toolAction}` ||
+              s === 'tools:write' ||
+              s === 'tools:edit' ||
+              s === 'tools'
           );
-        });
+        };
 
-        for (const constraint of matchingToolConstraints) {
-          if (ctx.ui?.confirm) {
-            const confirmed = await ctx.ui.confirm(
-              '🤖 Supervisión de Agente (Límite Operativo)',
-              `El agente intenta ejecutar la acción "${toolAction}" sobre "${targetPath}":\n\n` +
-                `Regla [${constraint.id.toUpperCase()}]: ${constraint.description}\n\n` +
-                `¿Autorizas la ejecución de esta herramienta?`
-            );
-            if (!confirmed) {
-              ctx.ui?.notify?.(`Operación ${toolAction} bloqueada por supervisión de agente.`, 'warning');
+        // 1.1 Never Rules (Prohibiciones terminantes de herramientas)
+        for (const never of agentPrefs.neverRules || []) {
+          if (isToolMatch(never.surface)) {
+            const reason = `Operación bloqueada por prohibición de agente [${never.id.toUpperCase()}]: ${never.description}`;
+            ctx.ui?.notify?.(reason, 'error');
+            return { block: true, reason };
+          }
+        }
+
+        // 1.2 Ask Rules (Puntos de control condicionales)
+        for (const ask of agentPrefs.askRules || []) {
+          if (isToolMatch(ask.surface)) {
+            if (ctx.ui?.confirm) {
+              const confirmed = await ctx.ui.confirm(
+                '🤖 Punto de Control de Agente [ASK]',
+                `${ask.prompt}\n\n(Default: ${ask.defaultAction})`
+              );
+              if (!confirmed) {
+                return {
+                  block: true,
+                  reason: `Operación bloqueada por decisión del usuario en punto de control [${ask.id.toUpperCase()}]: ${ask.defaultAction}`,
+                };
+              }
+            } else {
               return {
                 block: true,
-                reason: `Operación bloqueada por regla de supervisión [${constraint.id.toUpperCase()}]: ${constraint.description}`,
+                reason: `Operación bloqueada en modo desatendido por punto de control [${ask.id.toUpperCase()}]: ${ask.defaultAction}`,
               };
             }
-          } else {
-            return {
-              block: true,
-              reason: `Operación bloqueada: la acción "${toolAction}" requiere autorización interactiva según la regla [${constraint.id.toUpperCase()}]: ${constraint.description}`,
-            };
+          }
+        }
+
+        // 1.3 Invariants (Límites operativos obligatorios)
+        for (const inv of agentPrefs.invariants || []) {
+          if (isToolMatch(inv.surface)) {
+            if (ctx.ui?.confirm) {
+              const confirmed = await ctx.ui.confirm(
+                '🤖 Supervisión de Agente (Límite Operativo)',
+                `El agente intenta ejecutar la acción "${toolAction}" sobre "${targetPath}":\n\n` +
+                  `Regla [${inv.id.toUpperCase()}]: ${inv.description}\n\n` +
+                  `¿Autorizas la ejecución de esta herramienta?`
+              );
+              if (!confirmed) {
+                ctx.ui?.notify?.(`Operación ${toolAction} bloqueada por supervisión de agente.`, 'warning');
+                return {
+                  block: true,
+                  reason: `Operación bloqueada por regla de supervisión [${inv.id.toUpperCase()}]: ${inv.description}`,
+                };
+              }
+            } else {
+              return {
+                block: true,
+                reason: `Operación bloqueada: la acción "${toolAction}" requiere autorización interactiva según la regla [${inv.id.toUpperCase()}]: ${inv.description}`,
+              };
+            }
           }
         }
       }
@@ -1346,8 +1383,14 @@ export default function (pi: ExtensionAPI) {
       }
 
       return undefined;
-    } catch {
-      return undefined;
+    } catch (err: any) {
+      const errMsg = `Error interno en la barrera de gobernanza: ${err?.message || String(err)}`;
+      ctx.ui?.notify?.(`⚠️ ${errMsg}`, 'error');
+      console.error(errMsg);
+      return {
+        block: true,
+        reason: errMsg,
+      };
     }
   });
 }

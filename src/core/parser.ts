@@ -205,13 +205,23 @@ export function parsePlaybook(markdown: string): Playbook {
       for (const b of bulletLines) {
         const tag = b[1] ? b[1].trim() : `never-${idx++}`;
         const surface = b[2] ? b[2].trim() : 'general';
-        const text = b[3] ? b[3].trim() : '';
+        let text = b[3] ? b[3].trim() : '';
+        let reason: string | undefined = undefined;
+
+        // Extraer reason si viene anotado al final como (Motivo: ...) o (Reason: ...)
+        const reasonMatch = text.match(/\s*\((?:motivo|reason):\s*([^)]+)\)\s*$/i);
+        if (reasonMatch) {
+          reason = reasonMatch[1].trim();
+          text = text.replace(/\s*\((?:motivo|reason):\s*[^)]+\)\s*$/i, '').trim();
+        }
+
         neverRules.push({
           id: tag.toLowerCase(),
           type: 'never',
           title: `Prohibición: ${text}`,
           surface,
           description: text,
+          reason,
         });
       }
     } else if (secTitle.startsWith('canonical snippet') || secTitle.startsWith('snippet')) {
@@ -309,10 +319,11 @@ export function serializePlaybook(playbook: Playbook): string {
       parts.push('## Nunca');
       parts.push('');
       for (const never of playbook.neverRules) {
+        const reasonSuffix = never.reason ? ` (Motivo: ${never.reason})` : '';
         if (never.surface && never.surface !== 'general') {
-          parts.push(`- [${never.id.toUpperCase()}] \`${never.surface}\`: ${never.description}`);
+          parts.push(`- [${never.id.toUpperCase()}] \`${never.surface}\`: ${never.description}${reasonSuffix}`);
         } else {
-          parts.push(`- [${never.id.toUpperCase()}] ${never.description}`);
+          parts.push(`- [${never.id.toUpperCase()}] ${never.description}${reasonSuffix}`);
         }
       }
       parts.push('');

@@ -1,10 +1,18 @@
 import * as path from 'node:path';
 import { Playbook, InvariantRule, NeverRule, AskRule } from './schema.js';
 
+export type ViolationKind =
+  | 'checkpoint_bypass'
+  | 'playbook_bypass'
+  | 'surface_conflict'
+  | 'prohibited_dependency'
+  | 'agent_governance_violation';
+
 export interface ViolationMatch {
   rule: InvariantRule | NeverRule | AskRule;
   reason: string;
   source: 'never' | 'invariant' | 'ask';
+  kind: ViolationKind;
 }
 
 export interface AskTriggerMatch {
@@ -125,8 +133,9 @@ Responde ÚNICAMENTE con un bloque JSON con esta estructura exacta:
 \`\`\`json
 {
   "conflict": true,
+  "kind": "checkpoint_bypass" | "playbook_bypass" | "surface_conflict" | "prohibited_dependency" | "agent_governance_violation",
   "ruleId": "id-de-la-regla",
-  "reason": "Explicación breve del conflicto semántico"
+  "reason": "Explicación breve del conflicto"
 }
 \`\`\`
 O si no hay conflicto:
@@ -175,11 +184,27 @@ O si no hay conflicto:
             askRules.find((a) => a.id.toLowerCase() === rawId || clean(a.id) === targetClean);
 
           if (matchedRule) {
+            let kind: ViolationKind = 'surface_conflict';
+            if (
+              parsed.kind === 'checkpoint_bypass' ||
+              parsed.kind === 'playbook_bypass' ||
+              parsed.kind === 'surface_conflict' ||
+              parsed.kind === 'prohibited_dependency' ||
+              parsed.kind === 'agent_governance_violation'
+            ) {
+              kind = parsed.kind;
+            } else if (matchedRule.type === 'never') {
+              kind = 'prohibited_dependency';
+            } else if (matchedRule.type === 'ask') {
+              kind = 'checkpoint_bypass';
+            }
+
             return {
               violation: {
                 rule: matchedRule,
                 reason: parsed.reason || `Conflicto semántico detectado con la regla [${matchedRule.id.toUpperCase()}].`,
                 source: matchedRule.type,
+                kind,
               },
               triggeredAsk: null,
             };
@@ -244,7 +269,7 @@ export function checkPromptViolation(
 
   // 1. Check explicit bypass requests ("ignora el playbook", "no uses el playbook", "skip playbook")
   const bypassPattern =
-    /\b(?:ignor(?:[aá]|ar|e)?|salte(?:[aá]|ar|ate|tate)?|omit(?:[eé]|ir)?|desestim(?:[aá]|ar)?|olvid(?:[aá]|ar|ate|[ií]date)?|prescind(?:[eé]|ir)?|no\s+(?:uses?|utilices?|seguir)|don't\s+use|bypass|skip|apagar|desactivar)\s+(?:de\s+|del\s+|el\s+|the\s+)?playbook\b|\bhacelo\s+sin\s+(?:el\s+)?playbook\b/i;
+    /\b(?:ignor(?:[aá]|ar|e)?|salte(?:[aá]|ar|ate|tate)?|omit(?:[eé]|ir)?|desestim(?:[aá]|ar)?|olvid(?:[aá]|ar|ate|[ií]date)?|prescind(?:[eé]|ir)?|no\s+(?:uses?|utilices?|seguir)|don't\s+use|bypass|skip|apagar|desactivar)\s+(?:de\s+|del\s+|el\s+|the\s+)?playbook\b|\b(?:hacelo|hazlo|hacer|do\s+it)?\s*(?:sin|without)\s+(?:el\s+|the\s+)?playbook\b/i;
   if (bypassPattern.test(lowerPrompt)) {
     const firstRule = playbook.invariants[0] || (playbook.neverRules && playbook.neverRules[0]);
     if (firstRule) {
@@ -252,6 +277,7 @@ export function checkPromptViolation(
         rule: firstRule,
         reason: 'El prompt solicita explícitamente ignorar las reglas del playbook.',
         source: firstRule.type,
+        kind: 'playbook_bypass',
       };
     }
   }
@@ -270,6 +296,7 @@ export function checkPromptViolation(
           ? 'El prompt intenta omitir un punto de control de gobernanza obligatorio ("sin consultar"). Las reglas de supervisión exigen confirmación interactiva obligatoria.'
           : `El prompt intenta forzar la implementación eludiendo el punto de control [${targetAsk.id.toUpperCase()}]. Se requiere confirmación interactiva.`,
         source: targetAsk.type,
+        kind: 'checkpoint_bypass',
       };
     }
   }
@@ -288,6 +315,7 @@ export function checkPromptViolation(
             rule: never,
             reason: `El prompt solicita usar "${idSubject}", prohibido por la regla [${never.id.toUpperCase()}].`,
             source: 'never',
+            kind: 'prohibited_dependency',
           };
         }
       }
@@ -323,6 +351,7 @@ export function checkPromptViolation(
                 rule: never,
                 reason: `El prompt solicita "${cleanToken}", vetado en la categoría de la regla [${never.id.toUpperCase()}].`,
                 source: 'never',
+                kind: 'prohibited_dependency',
               };
             }
           }
@@ -352,6 +381,7 @@ export function checkPromptViolation(
               rule: never,
               reason: `El prompt solicita "${targetWord}", prohibido por la regla [${never.id.toUpperCase()}].`,
               source: 'never',
+              kind: 'prohibited_dependency',
             };
           }
         }
@@ -405,6 +435,7 @@ export function checkPromptViolation(
                   rule: never,
                   reason: `El prompt solicita "${member}", vetado por la regla [${never.id.toUpperCase()}] al pertenecer a la categoría de ${fam.description}.`,
                   source: 'never',
+                  kind: 'prohibited_dependency',
                 };
               }
             }
@@ -437,6 +468,7 @@ export function checkPromptViolation(
             rule: inv,
             reason: `El prompt solicita colocar código fuera de la superficie autorizada "${inv.surface}".`,
             source: 'invariant',
+            kind: 'surface_conflict',
           };
         }
       }
@@ -449,6 +481,7 @@ export function checkPromptViolation(
             rule: inv,
             reason: `El prompt solicita modelar con "class", prohibido por la regla de programación funcional [${inv.id.toUpperCase()}].`,
             source: 'invariant',
+            kind: 'surface_conflict',
           };
         }
       }
@@ -482,6 +515,13 @@ export function checkPathViolation(
   const invariants = playbook?.invariants || [];
   const neverRules = playbook?.neverRules || [];
 
+  // Afinidad dinámica de superficies: recolectar todas las superficies declaradas en el playbook
+  const otherDeclaredSurfaces = invariants
+    .map((other) => other.surface)
+    .filter(Boolean)
+    .flatMap((s) => s.split(',').map((p) => p.trim().replace(/^\.?\//, '').replace(/\/$/, '')))
+    .filter(Boolean);
+
   for (const inv of invariants) {
     const desc = (inv.description || '').toLowerCase();
     if (!inv.surface) continue;
@@ -503,32 +543,65 @@ export function checkPathViolation(
 
     if (!isExclusiveRule) continue;
 
-    // Verificar si es un archivo de código relevante o handler
+    // Verificar si es un archivo de código relevante
     const isSourceCode = /\.(?:go|ts|tsx|js|jsx|py|rs|java|c|cpp|rb|php)$/i.test(normalized);
     if (!isSourceCode) continue;
 
-    const isHttpRule = /(?:handler|controller|route|endpoint|http|transport)/i.test(inv.surface) || desc.includes('handler');
-    const isTargetFile = isHttpRule
-      ? /(?:handler|controller|route|endpoint|http|server|app|transport|grpc)/i.test(normalized) ||
-        (desc.includes('en main.go') && (normalized === 'main.go' || normalized.endsWith('/main.go'))) ||
-        (desc.includes('ni en pkg') && normalized.startsWith('pkg/')) ||
-        (desc.includes('ni en cmd') && normalized.startsWith('cmd/')) ||
-        (desc.includes('src/routes') && normalized.startsWith('src/routes/')) ||
-        (desc.includes('app/views') && normalized.startsWith('app/views/')) ||
-        (desc.includes('internal/core') && normalized.startsWith('internal/core/'))
-      : true;
+    const isAllowed = allowedPrefixes.some(
+      (prefix) => normalized === prefix || normalized.startsWith(prefix + '/')
+    );
+    if (isAllowed) continue;
 
-    if (isTargetFile) {
-      const isAllowed = allowedPrefixes.some(
-        (prefix) => normalized === prefix || normalized.startsWith(prefix + '/')
-      );
-      if (!isAllowed) {
-        return {
-          rule: inv,
-          reason: `La ruta "${normalized}" viola la ubicación exclusiva en "${inv.surface}".`,
-          source: 'invariant',
-        };
-      }
+    // Extraer menciones explícitas de rutas vetadas en la descripción (ej: "no crear en main.go ni en pkg/ ni en cmd/")
+    const forbiddenMentions = Array.from(
+      desc.matchAll(/(?:no\s+crear|no\s+escribir|no\s+poner|ni\s+en|no\s+en)\s+([a-zA-Z0-9_\-\.\/]+)/gi)
+    ).map((m) => m[1].toLowerCase().replace(/^\.?\//, '').replace(/\/$/, ''));
+
+    const isExplicitlyForbiddenHere = forbiddenMentions.some((f) => {
+      const cleanF = f.replace(/\/$/, '');
+      return normalized === cleanF || normalized.startsWith(cleanF + '/') || (cleanF.includes('.') && normalized.endsWith(cleanF));
+    });
+
+    // 1. Si escribe en una ruta explícitamente vetada por la regla en su texto
+    if (isExplicitlyForbiddenHere) {
+      return {
+        rule: inv,
+        reason: `La ruta "${normalized}" escribe en una ubicación prohibida por la regla [${inv.id.toUpperCase()}].`,
+        source: 'invariant',
+        kind: 'surface_conflict',
+      };
+    }
+
+    // 3. Evaluar si pertenece a OTRA capa arquitectónica declarada en el playbook
+    const belongsToOtherDeclaredLayer = otherDeclaredSurfaces
+      .filter((otherSurface) => !allowedPrefixes.includes(otherSurface))
+      .some((otherSurface) => normalized === otherSurface || normalized.startsWith(otherSurface + '/'));
+
+    if (belongsToOtherDeclaredLayer) {
+      // Pertenece legítimamente a otra capa de la arquitectura (evita deadlock de JD-B-001)
+      continue;
+    }
+
+    // 4. Si no está en otra capa declarada, verificar si el archivo coincide con el scope dinámico de la regla
+    const scopeTokens = `${inv.surface} ${inv.title} ${desc.split('.')[0]}`
+      .toLowerCase()
+      .split(/[\/,\s_.-]+/)
+      .filter((t) => t.length >= 3 && !['internal', 'src', 'app', 'pkg', 'lib', 'los', 'las', 'del', 'para', 'con', 'una', 'uno'].includes(t));
+
+    const isHttpTransportRule = scopeTokens.some((t) => t.includes('handler') || t.includes('port') || t.includes('http') || t.includes('transport'));
+
+    const matchesScope =
+      scopeTokens.some((t) => normalized.toLowerCase().includes(t)) ||
+      (isHttpTransportRule && /(?:handler|controller|route|endpoint|http|server|transport|api)/i.test(normalized)) ||
+      !normalized.includes('/');
+
+    if (matchesScope) {
+      return {
+        rule: inv,
+        reason: `La ruta "${normalized}" viola la ubicación exclusiva en "${inv.surface}".`,
+        source: 'invariant',
+        kind: 'surface_conflict',
+      };
     }
   }
 
@@ -547,6 +620,7 @@ export function checkPathViolation(
             rule: never,
             reason: `La ruta "${normalized}" escribe dentro de la superficie prohibida "${never.surface}".`,
             source: 'never',
+            kind: 'surface_conflict',
           };
         }
       }

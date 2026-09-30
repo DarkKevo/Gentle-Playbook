@@ -27,3 +27,10 @@ Issue #14 highlights residual governance issues from #12 under `--print` and int
   - JD-A-008: Escape regex characters in `idSubject` and target words.
   - JD-A-010: Display `neverRules` for Agent Preferences in `formatPlaybookForDisplay`.
   - JD-A-011: Guard against accidental full playbook deletion when `--rule` is passed without rule ID in `/playbook delete`.
+- [x] Task 8: Blind Audit Structural Remediation Round B (JD-B-001 to JD-B-006).
+  - JD-B-001: Dynamic multi-layer surface affinity in `checkPathViolation` to prevent cross-layer write deadlock.
+  - JD-B-002: Comprehensive agent supervision in `tool_call` covering `neverRules`, `askRules`, and `invariants`.
+  - JD-B-003: Strongly-typed `ViolationKind` on `ViolationMatch` and LLM JSON output to eliminate substring matching.
+  - JD-B-004: Strict Fail-Closed policy on unexpected exceptions in `tool_call`.
+  - JD-B-005: Idempotent round-trip serialization and parsing of `NeverRule.reason` in markdown storage.
+  - JD-B-006: Generalized intent-based `bypassPattern` covering Spanish/English phrasing.
