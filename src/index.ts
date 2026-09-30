@@ -10,7 +10,13 @@ import { formatPlaybookForDisplay, formatPlaybookForTool, formatAgentPreferences
 import { detectPromptInjection } from './core/security.js';
 import { InvariantRule, AskRule, NeverRule, RuleType, Playbook, AGENTS_PREFERENCES_ID } from './core/schema.js';
 import { buildSynthesisPrompt, parseSynthesizedRule, SynthesizedRule, isProhibitionDescription, ProhibitionScope } from './core/synthesizer.js';
-import { checkPromptViolation, checkPathViolation, evaluatePromptSemantically } from './core/checker.js';
+import {
+  checkPromptViolation,
+  checkPathViolation,
+  evaluatePromptSemantically,
+  checkAskTrigger,
+  AskTriggerMatch,
+} from './core/checker.js';
 import { getLanguageMenuLabels, resolveLanguage } from './core/languages.js';
 
 export interface ExtensionAPI {
@@ -1138,19 +1144,90 @@ export default function (pi: ExtensionAPI) {
         }
 
         if (violation) {
-          if (ctx.ui?.confirm) {
-            const pbName = pb.language === AGENTS_PREFERENCES_ID ? 'Agents Preferences' : pb.language.toUpperCase();
-            const confirmed = await ctx.ui.confirm(
-              '⚠️ Conflicto con Playbook',
-              `Esta acción entra en conflicto con ${pbName}:\n\n` +
-                `Regla [${violation.rule.id.toUpperCase()}]: ${violation.rule.description}\n` +
-                `Motivo: ${violation.reason}\n\n` +
-                `¿Deseas continuar permitiendo esta excepción?`
-            );
+          const pbName = pb.language === AGENTS_PREFERENCES_ID ? 'Agents Preferences' : pb.language.toUpperCase();
+          const ruleId = violation.rule.id.toUpperCase();
+          const isBypass =
+            violation.reason.includes('sin consultar') ||
+            violation.reason.includes('ignorar las reglas') ||
+            violation.reason.includes('punto de control');
 
-            if (!confirmed) {
-              ctx.ui?.notify('Acción cancelada para respetar el playbook.', 'info');
+          // Caso 1: Intento explícito de eludir checkpoints o apagar el playbook
+          if (isBypass) {
+            if (ctx.ui?.confirm) {
+              const confirmed = await ctx.ui.confirm(
+                '⚠️ Intento de Bypass de Gobernanza',
+                `El prompt intenta eludir un control obligatorio de ${pbName}:\n\n` +
+                  `Regla [${ruleId}]: ${violation.rule.description}\n` +
+                  `Motivo: ${violation.reason}\n\n` +
+                  `¿Autorizas explícitamente omitir este control?`
+              );
+              if (!confirmed) {
+                ctx.ui?.notify('Operación cancelada: Se respetan los controles de gobernanza.', 'info');
+                return { action: 'handled' };
+              }
+            } else {
+              // Fail-safe estricto en entornos headless con mensaje visible (no silencioso)
+              const msg = `❌ [GOBERNANZA PLAYBOOK] Operación bloqueada: No se permite omitir puntos de control ("sin consultar") en entornos desatendidos sin confirmación interactiva.`;
+              if (ctx.ui?.notify) ctx.ui.notify(msg, 'error');
+              console.error(msg);
               return { action: 'handled' };
+            }
+          } else {
+            // Caso 2: Conflicto de superficie/carpeta o kit vetado
+            const targetSurface = (violation.rule as any).surface || 'la superficie canónica del playbook';
+            if (ctx.ui?.select) {
+              const choice = await ctx.ui.select(
+                `⚠️ Conflicto con Playbook (${pbName})`,
+                [
+                  `🛡️ Redirigir a la arquitectura canónica (${targetSurface}) [Recomendado]`,
+                  `⚠️ Permitir excepción por esta única vez (escribir donde se solicitó)`,
+                  `❌ Cancelar la operación`,
+                ]
+              );
+              if (!choice || choice.includes('Cancelar')) {
+                ctx.ui?.notify('Operación cancelada para respetar el playbook.', 'info');
+                return { action: 'handled' };
+              }
+              if (choice.includes('Redirigir')) {
+                event.text = `${event.text}\n\n[DIRECTIVA DE GOBERNANZA PLAYBOOK]: El usuario seleccionó REDIRIGIR a la arquitectura canónica. Implementa completamente el requerimiento solicitado ("${promptText}"), pero ubica los archivos exclusivamente en "${targetSurface}" y sin usar kits o tecnologías vetadas por la regla [${ruleId}]. Explica claramente esta redirección al inicio de tu respuesta.`;
+              }
+            } else if (ctx.ui?.confirm) {
+              const confirmed = await ctx.ui.confirm(
+                '⚠️ Conflicto con Playbook',
+                `Esta acción entra en conflicto con ${pbName}:\n\n` +
+                  `Regla [${ruleId}]: ${violation.rule.description}\n` +
+                  `Motivo: ${violation.reason}\n\n` +
+                  `¿Deseas continuar permitiendo esta excepción?`
+              );
+
+              if (!confirmed) {
+                ctx.ui?.notify('Acción cancelada para respetar el playbook.', 'info');
+                return { action: 'handled' };
+              }
+            } else {
+              // Modo desatendido / headless / --print: Jamás aborto mudo. El playbook orienta y redirige.
+              event.text = `${event.text}\n\n[ADVERTENCIA DE GOBERNANZA PLAYBOOK]: El requerimiento entra en conflicto con la regla [${ruleId}]: ${violation.reason}. En modo desatendido se aplica la arquitectura canónica: implementa el feature solicitado ("${promptText}") ubicando el código exclusivamente en "${targetSurface}" y sin usar las tecnologías prohibidas. Detalla esta decisión al inicio de tu respuesta.`;
+            }
+          }
+        } else {
+          // Si no hubo violación, verificar si el prompt activa una regla ASK
+          const askMatch = checkAskTrigger(promptText, pb);
+          if (askMatch) {
+            const askId = askMatch.rule.id.toUpperCase();
+            if (ctx.ui?.confirm) {
+              const askTitle = askMatch.rule.title ? ` - ${askMatch.rule.title}` : '';
+              const applyExtra = await ctx.ui.confirm(
+                `💡 Playbook (${pb.language.toUpperCase()}): [ASK:${askId}]${askTitle}`,
+                `${askMatch.prompt}\n\n(Default: ${askMatch.defaultAction})`
+              );
+              if (applyExtra) {
+                event.text = `${event.text}\n\n[DIRECTIVA DE GOBERNANZA PLAYBOOK]: El usuario autorizó aplicar la regla [ASK:${askId}]. Implementa completamente el requerimiento solicitado ("${promptText}") e INCLUYE el extra aprobado (${askMatch.prompt}).`;
+              } else {
+                event.text = `${event.text}\n\n[DIRECTIVA DE GOBERNANZA PLAYBOOK]: El usuario declinó aplicar el extra de la regla [ASK:${askId}]. Implementa completamente el requerimiento solicitado ("${promptText}") pero NO apliques el extra (${askMatch.defaultAction}).`;
+              }
+            } else {
+              // Modo desatendido / headless: aplicar el default pero construyendo el feature base
+              event.text = `${event.text}\n\n[DIRECTIVA DE GOBERNANZA PLAYBOOK]: Ejecución desatendida. Para la regla [ASK:${askId}], aplica la acción por defecto: "${askMatch.defaultAction}". Implementa completamente el requerimiento base solicitado ("${promptText}") respetando este default.`;
             }
           }
         }
@@ -1211,7 +1288,7 @@ export default function (pi: ExtensionAPI) {
             // Fail-safe en entornos headless/desatendidos
             return {
               block: true,
-              reason: `Operación bloqueada: la ruta "${targetPath}" viola la regla [${pathViolation.rule.id.toUpperCase()}]: ${pathViolation.rule.description}`,
+              reason: `Operación bloqueada: la ruta "${targetPath}" viola la regla [${pathViolation.rule.id.toUpperCase()}]: ${pathViolation.rule.description}. Debes ubicar este código exclusivamente dentro de "${pathViolation.rule.surface}".`,
             };
           }
         }

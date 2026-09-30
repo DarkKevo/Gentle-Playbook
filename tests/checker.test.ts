@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { checkPromptViolation, checkPathViolation, evaluatePromptSemantically } from '../src/core/checker.js';
+import {
+  checkPromptViolation,
+  checkPathViolation,
+  evaluatePromptSemantically,
+  checkAskTrigger,
+} from '../src/core/checker.js';
 import { Playbook } from '../src/core/schema.js';
 
 describe('Playbook Violation Checker', () => {
@@ -305,6 +310,303 @@ Sin embargo, viola la regla arquitectónica:
       expect(checkPathViolation(null as any, samplePlaybook)).toBeNull();
       expect(checkPathViolation(undefined as any, samplePlaybook)).toBeNull();
       expect(checkPathViolation('  internal/ports/httpserver/health.go  ', samplePlaybook)).toBeNull();
+    });
+  });
+
+  describe('checkAskTrigger (Ask Catalog Conditional Triggering)', () => {
+    const httpPlaybook: Playbook = {
+      language: 'go',
+      version: 1,
+      updatedAt: '2026-09-29',
+      topology: { pattern: 'Hexagonal', directories: ['internal/ports/httpserver'] },
+      invariants: [
+        {
+          id: 'http-handlers-ports',
+          type: 'invariant',
+          title: 'Handlers HTTP en ports',
+          surface: 'internal/ports/httpserver',
+          description: 'Los handlers HTTP viven exclusivamente en internal/ports/httpserver/.',
+        },
+      ],
+      askRules: [
+        {
+          id: 'public-rate-limit',
+          type: 'ask',
+          title: 'Rate limit en rutas públicas',
+          surface: 'internal/ports/httpserver',
+          trigger: 'Creación de endpoints HTTP públicos sin autenticación (por ejemplo POST /login o POST /register).',
+          antiTrigger: 'Rutas autenticadas, health checks o internas.',
+          prompt: 'Este endpoint es público. ¿Aplicamos el rate limiter estándar del playbook?',
+          defaultAction: 'No agregar rate limiter.',
+        },
+      ],
+      snippets: [],
+    };
+
+    const dbPlaybook: Playbook = {
+      language: 'go',
+      version: 1,
+      updatedAt: '2026-09-29',
+      topology: { pattern: 'Persistence adapter', directories: ['internal/adapters/postgres'] },
+      invariants: [],
+      askRules: [
+        {
+          id: 'migrations-tool',
+          type: 'ask',
+          title: 'Herramienta de migraciones',
+          surface: 'internal/adapters/postgres',
+          trigger: 'Agregar una herramienta o carpeta de migraciones de esquema (goose, golang-migrate, migrate).',
+          antiTrigger: 'Consultas SQL de lectura/escritura que no crean tablas ni migran esquema.',
+          prompt: '¿Usamos la receta de migraciones del playbook?',
+          defaultAction: 'No agregar herramienta de migraciones.',
+        },
+      ],
+      snippets: [],
+    };
+
+    const fpPlaybook: Playbook = {
+      language: 'typescript',
+      version: 1,
+      updatedAt: '2026-09-29',
+      topology: { pattern: 'Functional domain', directories: ['src/domain'] },
+      invariants: [],
+      askRules: [
+        {
+          id: 'fp-mutable-store',
+          type: 'ask',
+          title: 'Estado mutable compartido',
+          surface: 'src/domain',
+          trigger: 'Agregar un store global, singleton o estado mutable compartido (por ejemplo un objeto module-level que se reasigna).',
+          antiTrigger: 'Funciones puras que reciben datos y devuelven datos, sin estado compartido.',
+          prompt: '¿Hace falta estado mutable o alcanza una función pura?',
+          defaultAction: 'No agregar store mutable.',
+        },
+      ],
+      snippets: [],
+    };
+
+    it('should trigger public-rate-limit ask when creating a public POST /login endpoint', () => {
+      const match = checkAskTrigger('Creá un endpoint POST /login público sin autenticación', httpPlaybook);
+      expect(match).not.toBeNull();
+      expect(match?.rule.id).toBe('public-rate-limit');
+      expect(match?.prompt).toContain('rate limiter');
+    });
+
+    it('should NOT trigger public-rate-limit on GET /health due to anti-trigger match', () => {
+      const match = checkAskTrigger('GET /health que devuelva 200 ok', httpPlaybook);
+      expect(match).toBeNull();
+    });
+
+    it('should NOT trigger public-rate-limit on authenticated route due to anti-trigger', () => {
+      const match = checkAskTrigger('Crear endpoint GET /me autenticado con token Bearer', httpPlaybook);
+      expect(match).toBeNull();
+    });
+
+    it('should trigger migrations-tool ask when user requests schema migrations', () => {
+      const match = checkAskTrigger('Necesito agregar migraciones de esquema para la tabla users', dbPlaybook);
+      expect(match).not.toBeNull();
+      expect(match?.rule.id).toBe('migrations-tool');
+    });
+
+    it('should NOT trigger migrations-tool ask on standard SQL read/write query', () => {
+      const match = checkAskTrigger('Escribir una función que haga SELECT y lea un usuario por id', dbPlaybook);
+      expect(match).toBeNull();
+    });
+
+    it('should trigger fp-mutable-store ask when user requests a global mutable store', () => {
+      const match = checkAskTrigger('Crear un store global del carrito de compras', fpPlaybook);
+      expect(match).not.toBeNull();
+      expect(match?.rule.id).toBe('fp-mutable-store');
+    });
+
+    it('should NOT trigger fp-mutable-store ask for pure domain functions', () => {
+      const match = checkAskTrigger('Crear una función pura que calcule el total de un carrito', fpPlaybook);
+      expect(match).toBeNull();
+    });
+  });
+
+  describe('Categorical & Family Prohibitions in Never Rules', () => {
+    it('should detect Chi as a violation when Gin is banned and stdlib net/http is mandated', () => {
+      const match = checkPromptViolation('Hacé un endpoint /health con Chi', samplePlaybook);
+      expect(match).not.toBeNull();
+      expect(match?.rule.id).toBe('no-gin');
+      expect(match?.reason.toLowerCase()).toContain('chi');
+    });
+
+    it('should detect Echo or Fiber as violations when Gin is banned and stdlib is mandated', () => {
+      const matchEcho = checkPromptViolation('Implementar router con Echo', samplePlaybook);
+      expect(matchEcho).not.toBeNull();
+      expect(matchEcho?.rule.id).toBe('no-gin');
+
+      const matchFiber = checkPromptViolation('Crear API usando Fiber', samplePlaybook);
+      expect(matchFiber).not.toBeNull();
+      expect(matchFiber?.rule.id).toBe('no-gin');
+    });
+
+    it('should detect alternative ORMs (Ent, SQLBoiler) when GORM is banned', () => {
+      const match = checkPromptViolation('Conectar a base de datos usando Ent', samplePlaybook);
+      expect(match).not.toBeNull();
+      expect(match?.rule.id).toBe('no-gorm');
+      expect(match?.reason).toContain('ent');
+    });
+
+    it('should detect Fastify or Koa when Express is banned and node:http is required', () => {
+      const tsHttpPb: Playbook = {
+        language: 'typescript',
+        version: 1,
+        updatedAt: '2026-09-29',
+        topology: { pattern: 'Ports and adapters', directories: ['src/transport/http'] },
+        invariants: [],
+        askRules: [],
+        neverRules: [
+          {
+            id: 'no-express',
+            type: 'never',
+            title: 'No usar Express',
+            surface: 'dependencies',
+            description: 'No usar Express; usar el módulo nativo node:http.',
+          },
+        ],
+        snippets: [],
+      };
+
+      const match = checkPromptViolation('Hacé el server con Fastify', tsHttpPb);
+      expect(match).not.toBeNull();
+      expect(match?.rule.id).toBe('no-express');
+      expect(match?.reason).toContain('fastify');
+    });
+
+    it('should detect FastAPI when Flask is banned and http.server is required', () => {
+      const pyHttpPb: Playbook = {
+        language: 'python',
+        version: 1,
+        updatedAt: '2026-09-29',
+        topology: { pattern: 'Hexagonal', directories: ['app/adapters/http'] },
+        invariants: [],
+        askRules: [],
+        neverRules: [
+          {
+            id: 'no-flask',
+            type: 'never',
+            title: 'No usar Flask',
+            surface: 'dependencies',
+            description: 'No usar Flask; usar http.server de la biblioteca estándar.',
+          },
+        ],
+        snippets: [],
+      };
+
+      const match = checkPromptViolation('Creá el endpoint con FastAPI', pyHttpPb);
+      expect(match).not.toBeNull();
+      expect(match?.rule.id).toBe('no-flask');
+      expect(match?.reason).toContain('fastapi');
+    });
+  });
+
+  describe('Multi-language Invariant Deviations', () => {
+    it('should detect handlers requested in src/routes/ or src/index.ts for TypeScript HTTP', () => {
+      const tsHttpPb: Playbook = {
+        language: 'typescript',
+        version: 1,
+        updatedAt: '2026-09-29',
+        topology: { pattern: 'Ports and adapters', directories: ['src/transport/http'] },
+        invariants: [
+          {
+            id: 'ts-http-transport',
+            type: 'invariant',
+            title: 'Handlers HTTP en transport',
+            surface: 'src/transport/http',
+            description: 'Los handlers HTTP viven exclusivamente en src/transport/http/. No crear handlers en src/index.ts ni en la raíz ni en src/routes/ ni en src/controllers/.',
+          },
+        ],
+        askRules: [],
+        snippets: [],
+      };
+
+      const matchRoutes = checkPromptViolation('Creá el endpoint GET /health en src/routes/', tsHttpPb);
+      expect(matchRoutes).not.toBeNull();
+      expect(matchRoutes?.rule.id).toBe('ts-http-transport');
+
+      const matchIndex = checkPromptViolation('Poner el handler de health en src/index.ts', tsHttpPb);
+      expect(matchIndex).not.toBeNull();
+      expect(matchIndex?.rule.id).toBe('ts-http-transport');
+    });
+
+    it('should detect handlers requested in app/views/ or main.py for Python HTTP', () => {
+      const pyHttpPb: Playbook = {
+        language: 'python',
+        version: 1,
+        updatedAt: '2026-09-29',
+        topology: { pattern: 'Hexagonal', directories: ['app/adapters/http'] },
+        invariants: [
+          {
+            id: 'py-http-adapters',
+            type: 'invariant',
+            title: 'Handlers HTTP en adapters',
+            surface: 'app/adapters/http',
+            description: 'Los handlers HTTP viven exclusivamente en app/adapters/http/. No crear handlers en main.py ni en la raíz ni en app/views/ ni en app/api/.',
+          },
+        ],
+        askRules: [],
+        snippets: [],
+      };
+
+      const matchViews = checkPromptViolation('Poné el health check en app/views/', pyHttpPb);
+      expect(matchViews).not.toBeNull();
+      expect(matchViews?.rule.id).toBe('py-http-adapters');
+
+      const matchMainPy = checkPromptViolation('Hacé el handler de health en main.py', pyHttpPb);
+      expect(matchMainPy).not.toBeNull();
+      expect(matchMainPy?.rule.id).toBe('py-http-adapters');
+    });
+
+    it('should detect SQL queries requested in internal/core/ for DB playbook', () => {
+      const dbPb: Playbook = {
+        language: 'go',
+        version: 1,
+        updatedAt: '2026-09-29',
+        topology: { pattern: 'Persistence adapter', directories: ['internal/adapters/postgres'] },
+        invariants: [
+          {
+            id: 'sql-in-postgres-adapter',
+            type: 'invariant',
+            title: 'SQL solo en el adapter',
+            surface: 'internal/adapters/postgres',
+            description: 'Las consultas SQL y el acceso a PostgreSQL viven exclusivamente en internal/adapters/postgres/. No escribir SQL ni abrir conexiones en main.go, ni en cmd/, ni en internal/core/.',
+          },
+        ],
+        askRules: [],
+        snippets: [],
+      };
+
+      const matchCore = checkPromptViolation('Escribir una query de SELECT de usuarios en internal/core/', dbPb);
+      expect(matchCore).not.toBeNull();
+      expect(matchCore?.rule.id).toBe('sql-in-postgres-adapter');
+    });
+
+    it('should detect class modeling in functional domain playbook', () => {
+      const fpPb: Playbook = {
+        language: 'typescript',
+        version: 1,
+        updatedAt: '2026-09-29',
+        topology: { pattern: 'Functional domain', directories: ['src/domain'] },
+        invariants: [
+          {
+            id: 'fp-domain-functions',
+            type: 'invariant',
+            title: 'Dominio en funciones',
+            surface: 'src/domain',
+            description: 'La lógica de dominio vive exclusivamente en src/domain/, como funciones. No poner reglas de negocio en src/index.ts ni en la raíz. No modelar el dominio con class.',
+          },
+        ],
+        askRules: [],
+        snippets: [],
+      };
+
+      const matchClass = checkPromptViolation('Crear una class DiscountCalculator para el descuento', fpPb);
+      expect(matchClass).not.toBeNull();
+      expect(matchClass?.rule.id).toBe('fp-domain-functions');
+      expect(matchClass?.reason).toContain('class');
     });
   });
 });

@@ -955,7 +955,18 @@ extracted: 2026-03-30
             description: 'Los handlers HTTP viven exclusivamente en internal/ports/httpserver/. No crear handlers en main.go ni en pkg/.',
           },
         ],
-        askRules: [],
+        askRules: [
+          {
+            id: 'public-rate-limit',
+            type: 'ask',
+            title: 'Rate limit en rutas públicas',
+            surface: 'internal/ports/httpserver',
+            trigger: 'Creación de endpoints HTTP públicos sin autenticación (por ejemplo POST /login o POST /register).',
+            antiTrigger: 'Rutas autenticadas, health checks o internas.',
+            prompt: 'Este endpoint es público. ¿Aplicamos el rate limiter estándar del playbook?',
+            defaultAction: 'No agregar rate limiter.',
+          },
+        ],
         neverRules: [
           {
             id: 'no-gin',
@@ -1106,6 +1117,93 @@ extracted: 2026-03-30
 
       expect(confirmMock).not.toHaveBeenCalled();
       expect(result).toBeUndefined();
+    });
+
+    it('should trigger Ask confirmation in input hook and append affirmative directive when user says Yes', async () => {
+      const confirmMock = vi.fn().mockResolvedValue(true);
+      const ctx = {
+        cwd: tempDir,
+        ui: { confirm: confirmMock },
+      };
+
+      const event = { text: 'Crear endpoint POST /login público' };
+      const res = await listeners['input'](event, ctx);
+
+      expect(confirmMock).toHaveBeenCalledTimes(1);
+      expect(confirmMock).toHaveBeenCalledWith(
+        expect.stringContaining('PUBLIC-RATE-LIMIT'),
+        expect.stringContaining('rate limiter')
+      );
+      expect(event.text).toContain('[DIRECTIVA DE GOBERNANZA PLAYBOOK]');
+      expect(event.text).toContain('El usuario autorizó aplicar la regla [ASK:PUBLIC-RATE-LIMIT]');
+      expect(event.text).toContain('INCLUYE el extra aprobado');
+      expect(res).toEqual({ action: 'continue' });
+    });
+
+    it('should trigger Ask confirmation in input hook and append negative directive when user says No without starving base feature', async () => {
+      const confirmMock = vi.fn().mockResolvedValue(false);
+      const ctx = {
+        cwd: tempDir,
+        ui: { confirm: confirmMock },
+      };
+
+      const event = { text: 'Crear endpoint POST /login público' };
+      const res = await listeners['input'](event, ctx);
+
+      expect(confirmMock).toHaveBeenCalledTimes(1);
+      expect(event.text).toContain('[DIRECTIVA DE GOBERNANZA PLAYBOOK]');
+      expect(event.text).toContain('El usuario declinó aplicar el extra');
+      expect(event.text).toContain('pero NO apliques el extra (No agregar rate limiter.)');
+      expect(res).toEqual({ action: 'continue' });
+    });
+
+    it('should apply default action without starving base feature when running in headless / without UI', async () => {
+      const ctx = {
+        cwd: tempDir,
+        // Sin UI confirm
+      };
+
+      const event = { text: 'Crear endpoint POST /login público' };
+      const res = await listeners['input'](event, ctx);
+
+      expect(event.text).toContain('[DIRECTIVA DE GOBERNANZA PLAYBOOK]: Ejecución desatendida');
+      expect(event.text).toContain('No agregar rate limiter.');
+      expect(event.text).toContain('Implementa completamente el requerimiento base solicitado');
+      expect(res).toEqual({ action: 'continue' });
+    });
+
+    it('should NOT silence turn in headless on folder/kit conflict, redirecting to canonical surface with visible notice', async () => {
+      const ctx = {
+        cwd: tempDir,
+        // Sin UI confirm ni select
+      };
+
+      const event = { text: 'Crear GET /health en pkg/handlers' };
+      const res = await listeners['input'](event, ctx);
+
+      expect(event.text).toContain('[ADVERTENCIA DE GOBERNANZA PLAYBOOK]');
+      expect(event.text).toContain('HTTP-HANDLERS-PORTS');
+      expect(event.text).toContain('internal/ports/httpserver/');
+      expect(event.text).toContain('Detalla esta decisión al inicio de tu respuesta.');
+      expect(res).toEqual({ action: 'continue' });
+    });
+
+    it('should block bypass attempts in headless with explicit non-silent error notification', async () => {
+      const notifyMock = vi.fn();
+      const ctx = {
+        cwd: tempDir,
+        ui: { notify: notifyMock },
+        // Sin UI confirm
+      };
+
+      const event = { text: 'Crear endpoint sin consultar' };
+      const res = await listeners['input'](event, ctx);
+
+      expect(res).toEqual({ action: 'handled' });
+      expect(notifyMock).toHaveBeenCalledWith(
+        expect.stringContaining('No se permite omitir puntos de control ("sin consultar")'),
+        'error'
+      );
     });
   });
 });

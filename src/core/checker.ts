@@ -7,6 +7,60 @@ export interface ViolationMatch {
   source: 'never' | 'invariant' | 'ask';
 }
 
+export interface AskTriggerMatch {
+  rule: AskRule;
+  prompt: string;
+  defaultAction: string;
+}
+
+/**
+ * Familias tecnológicas para reconocer análogos y alternativas cuando
+ * una regla veta una tecnología o exige el uso exclusivo de la biblioteca estándar (stdlib).
+ */
+export const TECHNOLOGY_FAMILIES: Record<
+  string,
+  { family: string; members: string[]; stdlib?: string; description?: string }
+> = {
+  gin: {
+    family: 'go-http-frameworks',
+    members: ['gin', 'chi', 'echo', 'fiber', 'gorilla/mux', 'gorilla mux', 'mux', 'beego', 'iris', 'fasthttp', 'revel'],
+    stdlib: 'net/http',
+    description: 'routers o frameworks HTTP externos en Go',
+  },
+  express: {
+    family: 'node-http-frameworks',
+    members: ['express', 'fastify', 'koa', 'nestjs', 'nest', 'hapi', 'restify'],
+    stdlib: 'node:http',
+    description: 'frameworks HTTP externos en Node/TypeScript',
+  },
+  flask: {
+    family: 'python-http-frameworks',
+    members: ['flask', 'django', 'fastapi', 'tornado', 'bottle', 'sanic', 'pyramid', 'falcon'],
+    stdlib: 'http.server',
+    description: 'frameworks HTTP externos en Python',
+  },
+  gorm: {
+    family: 'go-orms',
+    members: ['gorm', 'ent', 'sqlboiler', 'xorm', 'beego orm'],
+    description: 'ORMs pesados en Go',
+  },
+  prisma: {
+    family: 'node-orms',
+    members: ['prisma', 'typeorm', 'sequelize', 'mongoose', 'mikro-orm', 'drizzle'],
+    description: 'ORMs en Node/TypeScript',
+  },
+  sqlalchemy: {
+    family: 'python-orms',
+    members: ['sqlalchemy', 'django-orm', 'peewee', 'tortoise-orm', 'tortoise'],
+    description: 'ORMs en Python',
+  },
+  lodash: {
+    family: 'js-fp-utils',
+    members: ['lodash', 'underscore', 'ramda'],
+    description: 'librerías externas de utilidades funcionales',
+  },
+};
+
 /**
  * Evaluates semantically via LLM agent whether a user prompt conflicts with,
  * contradicts, or attempts to bypass any active playbook rules.
@@ -48,14 +102,18 @@ ${rulesList.join('\n')}
 
 ## CRITERIOS DE JUICIO SEMÁNTICO:
 1. CONFLICTO / VIOLACIÓN (conflict: true):
-   - El usuario pide usar una tecnología, herramienta o práctica prohibida por una regla NEVER (por nombre, sinónimo, familia o paráfrasis).
-   - El usuario pide colocar código, handlers o archivos en rutas contrarias a una regla INVARIANT de exclusividad.
+   - El usuario pide usar una tecnología, herramienta o práctica prohibida por una regla NEVER (por nombre, sinónimo, familia o paráfrasis, ej: Chi/Echo cuando se prohíbe Gin y se exige net/http; Fastify/Koa cuando se prohíbe Express y se exige node:http; FastAPI/Django cuando se prohíbe Flask y se exige http.server; ORMs cuando se prohíbe GORM/Prisma/SQLAlchemy; lodash en FP).
+   - El usuario pide colocar código, handlers, SQL o lógica en rutas contrarias a una regla INVARIANT de exclusividad (ej: en main.go, pkg/, cmd/, src/routes/, app/views/, internal/core/, etc.).
+   - El usuario modela con class cuando la regla de arquitectura lo prohíbe expresamente.
    - El usuario pide explícitamente ignorar, apagar o no usar el playbook ("sin playbook", "olvidate de las reglas", etc.).
-   - El usuario intenta forzar la implementación eludiendo un punto de control ("sin preguntar", "no consultes", "hacelo de una sin confirmación").
+   - El usuario intenta forzar la implementación eludiendo un punto de control ("sin preguntar", "no consultes", "sin consultar", "hacelo de una sin confirmación"). Todo intento de bypass de checkpoint es SIEMPRE conflicto.
 
 2. COMPATIBLE / SIN CONFLICTO (conflict: false):
    - Consultas informativas, lectura, preguntas conceptuales o peticiones que cumplen la arquitectura.
-   - Si una regla es un ASK condicional de código (ej: rate limiter en rutas públicas) y el usuario explícitamente solicita implementar esa feature, NO es conflicto: es una aprobación semántica válida.
+   - Peticiones ordinarias de implementación que se ubican en las superficies permitidas.
+
+3. DETECCIÓN DE REGLAS ASK CONDICIONALES (triggeredAskId):
+   - Si el requerimiento activa la condición/trigger de una regla ASK (ej: endpoint público como /login o /signup, migraciones de esquema, o estado mutable) y NO coincide con su anti-trigger (health checks, rutas autenticadas, funciones puras), reporta "triggeredAskId": "id-del-ask".
 
 Responde ÚNICAMENTE con un bloque JSON con esta estructura exacta:
 \`\`\`json
@@ -68,7 +126,8 @@ Responde ÚNICAMENTE con un bloque JSON con esta estructura exacta:
 O si no hay conflicto:
 \`\`\`json
 {
-  "conflict": false
+  "conflict": false,
+  "triggeredAskId": "id-del-ask-si-aplica"
 }
 \`\`\`
 `;
@@ -235,29 +294,93 @@ export function checkPromptViolation(
           }
         }
       }
+
+      // 3.4 Categorical Family Prohibitions (e.g. Gin banned + net/http required -> bans Chi, Echo, Fiber, etc.)
+      const descLower = (never.description || '').toLowerCase();
+      const reasonsLower = (never.reason || '').toLowerCase();
+      const mentionsStdlib =
+        descLower.includes('biblioteca estándar') ||
+        descLower.includes('biblioteca estandar') ||
+        descLower.includes('stdlib') ||
+        descLower.includes('standard library') ||
+        descLower.includes('net/http') ||
+        descLower.includes('node:http') ||
+        descLower.includes('http.server') ||
+        descLower.includes('sql puro') ||
+        descLower.includes('acceso sql explícito') ||
+        descLower.includes('funciones nativas') ||
+        reasonsLower.includes('stdlib');
+
+      for (const [key, fam] of Object.entries(TECHNOLOGY_FAMILIES)) {
+        const matchesKey =
+          never.id.toLowerCase().includes(key) ||
+          descLower.includes(key) ||
+          idSubject === key;
+
+        if (matchesKey) {
+          // Si la regla exige stdlib, o veta la categoría ("otros orm", "otros frameworks", etc.)
+          if (
+            mentionsStdlib ||
+            descLower.includes('otros orm') ||
+            descLower.includes('otros frameworks') ||
+            descLower.includes('otro framework') ||
+            descLower.includes('cualquier orm')
+          ) {
+            for (const member of fam.members) {
+              if (member === key) continue; // ya evaluado en 3.1
+              const memberEscaped = member.replace(/[\/\\^$*+?.()|[\]{}]/g, '\\$&');
+              const memberRegex = new RegExp(`\\b${memberEscaped}(?:s|es)?\\b`, 'i');
+              if (memberRegex.test(lowerPrompt)) {
+                return {
+                  rule: never,
+                  reason: `El prompt solicita "${member}", vetado por la regla [${never.id.toUpperCase()}] al pertenecer a la categoría de ${fam.description}.`,
+                  source: 'never',
+                };
+              }
+            }
+          }
+        }
+      }
     }
   }
 
-  // 4. Check Invariant Surface Deviations (e.g. prompt specifies an unauthorized folder)
+  // 4. Check Invariant Surface Deviations (e.g. prompt specifies an unauthorized folder or pattern)
   for (const inv of playbook.invariants) {
     const desc = inv.description.toLowerCase();
-    if (desc.includes('exclusivamente en') && inv.surface) {
-      const mentionsMain = /\b(?:en\s+main\.go|en\s+la\s+ra[ií]z)\b/i.test(lowerPrompt);
-      const mentionsPkg = /\b(?:en\s+pkg[\w\/-]*)\b/i.test(lowerPrompt);
-      const mentionsCmd = /\b(?:en\s+cmd[\w\/-]*)\b/i.test(lowerPrompt);
-      const mentionsHandlersRoot = /\b(?:en\s+handlers[\w\/-]*)\b/i.test(lowerPrompt);
+    if (inv.surface) {
+      const forbiddenPathPhrases: Array<{ regex: RegExp; forbiddenInDesc: string }> = [
+        { regex: /\b(?:en\s+main\.go|en\s+la\s+ra[ií]z)\b/i, forbiddenInDesc: 'en main.go' },
+        { regex: /\b(?:en\s+main\.py)\b/i, forbiddenInDesc: 'en main.py' },
+        { regex: /\b(?:en\s+src\/index\.ts|en\s+index\.ts)\b/i, forbiddenInDesc: 'en src/index.ts' },
+        { regex: /\b(?:en\s+pkg[\w\/-]*)\b/i, forbiddenInDesc: 'ni en pkg/' },
+        { regex: /\b(?:en\s+cmd[\w\/-]*)\b/i, forbiddenInDesc: 'ni en cmd/' },
+        { regex: /\b(?:en\s+src\/routes[\w\/-]*)\b/i, forbiddenInDesc: 'src/routes' },
+        { regex: /\b(?:en\s+src\/controllers[\w\/-]*)\b/i, forbiddenInDesc: 'src/controllers' },
+        { regex: /\b(?:en\s+app\/views[\w\/-]*)\b/i, forbiddenInDesc: 'app/views' },
+        { regex: /\b(?:en\s+app\/api[\w\/-]*)\b/i, forbiddenInDesc: 'app/api' },
+        { regex: /\b(?:en\s+internal\/core[\w\/-]*)\b/i, forbiddenInDesc: 'internal/core' },
+      ];
 
-      if (
-        (mentionsMain && desc.includes('no crear handlers en main.go')) ||
-        (mentionsPkg && desc.includes('ni en pkg/')) ||
-        (mentionsCmd && desc.includes('ni en cmd/')) ||
-        (mentionsHandlersRoot && !inv.surface.includes('handlers/'))
-      ) {
-        return {
-          rule: inv,
-          reason: `El prompt solicita colocar código fuera de la superficie autorizada "${inv.surface}".`,
-          source: 'invariant',
-        };
+      for (const phrase of forbiddenPathPhrases) {
+        if (phrase.regex.test(lowerPrompt) && desc.includes(phrase.forbiddenInDesc)) {
+          return {
+            rule: inv,
+            reason: `El prompt solicita colocar código fuera de la superficie autorizada "${inv.surface}".`,
+            source: 'invariant',
+          };
+        }
+      }
+
+      // 4.2 Prohibición de modelar dominio con class (FP)
+      if (desc.includes('no modelar el dominio con class') || desc.includes('no modelar con class')) {
+        const mentionsClass = /\b(?:class\s+\w+|con\s+class|usando\s+class)\b/i.test(lowerPrompt);
+        if (mentionsClass) {
+          return {
+            rule: inv,
+            reason: `El prompt solicita modelar con "class", prohibido por la regla de programación funcional [${inv.id.toUpperCase()}].`,
+            source: 'invariant',
+          };
+        }
       }
     }
   }
@@ -328,6 +451,141 @@ export function checkPathViolation(
           source: 'never',
         };
       }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Evaluates whether a user prompt triggers a conditional AskRule in the playbook.
+ * Honors anti-triggers (e.g. health checks, authenticated routes, pure functions, simple SQL),
+ * checks for trigger keywords/patterns, and ignores if the decision was already explicitly made.
+ */
+export function checkAskTrigger(
+  promptText: string,
+  playbook: Playbook
+): AskTriggerMatch | null {
+  if (!promptText || !playbook?.askRules || playbook.askRules.length === 0) return null;
+  const lowerPrompt = promptText.toLowerCase();
+
+  for (const ask of playbook.askRules) {
+    const trigger = (ask.trigger || '').toLowerCase();
+    const antiTrigger = (ask.antiTrigger || '').toLowerCase();
+
+    // 1. Anti-trigger evaluation
+    if (antiTrigger) {
+      // Health checks
+      const isHealth = /\b(?:health|healthz|salud|ping)\b/i.test(lowerPrompt);
+      if (isHealth && (antiTrigger.includes('health') || antiTrigger.includes('health checks'))) {
+        continue;
+      }
+
+      // Rutas autenticadas, tokens, bearer, me
+      const isAuth = /\b(?:autenticad[oa]s?|bearer|jwt|token|auth|privad[oa]s?|intern[ao]s?|\/me)\b/i.test(lowerPrompt);
+      if (isAuth && (antiTrigger.includes('autenticad') || antiTrigger.includes('internas') || antiTrigger.includes('authenticated'))) {
+        continue;
+      }
+
+      // Funciones puras (FP)
+      const isPure = /\b(?:funciones?\s+puras?|pure\s+functions?|funci[oó]n\s+pura)\b/i.test(lowerPrompt);
+      if (isPure && antiTrigger.includes('pura')) {
+        continue;
+      }
+
+      // Consultas SQL simples de lectura/escritura (que no migran esquema)
+      const isSimpleSql =
+        /\b(?:select|insert|update|delete|leer|guardar|fetch|buscar|usuario|users)\b/i.test(lowerPrompt) &&
+        !/\b(?:migra(?:r|ci[oó]n|ciones)|schema|esquema|create\s+table|alter\s+table)\b/i.test(lowerPrompt);
+      if (isSimpleSql && antiTrigger.includes('consultas sql')) {
+        continue;
+      }
+    }
+
+    // 2. Si el prompt ya tomó la decisión explícita (aprobó o declinó el extra específico)
+    const explicitApproval = /\b(?:con\s+(?:rate\s*limit|ratelimit|x-request-id|cors|goose)|con\s+la\s+receta\s+de\s+migraciones)\b/i.test(lowerPrompt);
+    const explicitDecline = /\b(?:sin\s+(?:rate\s*limit|ratelimit|x-request-id|cors|goose)|sin\s+herramienta\s+de\s+migraciones)\b/i.test(lowerPrompt);
+
+    if (explicitApproval || explicitDecline) {
+      continue;
+    }
+
+    // 3. Evaluar si activa el Trigger
+    let matchesTrigger = false;
+
+    // a) Ejemplos entre paréntesis en el trigger (e.g. "POST /login o POST /register", "goose, golang-migrate")
+    const examplesMatch = trigger.match(/\((?:por ejemplo\s+|e\.g\.\s+)?([^)]+)\)/i);
+    if (examplesMatch) {
+      const examples = examplesMatch[1].split(/[,;/]|\bo\b|\bor\b/).map((s) => s.trim().toLowerCase());
+      for (const ex of examples) {
+        if (ex && ex.length >= 3 && lowerPrompt.includes(ex)) {
+          matchesTrigger = true;
+          break;
+        }
+      }
+    }
+
+    // b) Patrones específicos de cada tipo de Ask
+    // HTTP: rutas públicas no autenticadas (login, signup, register, público)
+    if (
+      !matchesTrigger &&
+      (trigger.includes('públic') ||
+        trigger.includes('public') ||
+        trigger.includes('autenticación') ||
+        trigger.includes('authentication'))
+    ) {
+      const isPublicEndpoint = /\b(?:login|signup|register|registro|iniciar\s+sesi[oó]n|p[uú]blic[ao]s?)\b/i.test(
+        lowerPrompt
+      );
+      if (isPublicEndpoint) {
+        matchesTrigger = true;
+      }
+    }
+
+    // Migraciones de esquema
+    if (
+      !matchesTrigger &&
+      (trigger.includes('migra') || trigger.includes('esquema') || trigger.includes('schema'))
+    ) {
+      const isMigration = /\b(?:migra(?:r|ci[oó]n|ciones)|goose|golang-migrate|migrate|flyway|liquibase)\b/i.test(
+        lowerPrompt
+      );
+      if (isMigration) {
+        matchesTrigger = true;
+      }
+    }
+
+    // Store mutable compartido
+    if (
+      !matchesTrigger &&
+      (trigger.includes('mutable') ||
+        trigger.includes('store') ||
+        trigger.includes('singleton') ||
+        trigger.includes('estado'))
+    ) {
+      const isMutable = /\b(?:store\s+global|estado\s+mutable|singleton|shared\s+state|global\s+state|let\s+\w+\s*=)\b/i.test(
+        lowerPrompt
+      );
+      if (isMutable) {
+        matchesTrigger = true;
+      }
+    }
+
+    // c) Mención de keywords de prompt o trigger
+    if (!matchesTrigger && ask.prompt) {
+      const pLow = ask.prompt.toLowerCase();
+      if (pLow.includes('rate limit') && /\brate\s*limit\b/i.test(lowerPrompt)) matchesTrigger = true;
+      if (pLow.includes('x-request-id') && /\brequest[\s-]?id\b/i.test(lowerPrompt)) matchesTrigger = true;
+      if (pLow.includes('cors') && /\bcors\b/i.test(lowerPrompt)) matchesTrigger = true;
+      if (pLow.includes('migraciones') && /\bmigra/i.test(lowerPrompt)) matchesTrigger = true;
+    }
+
+    if (matchesTrigger) {
+      return {
+        rule: ask,
+        prompt: ask.prompt,
+        defaultAction: ask.defaultAction || 'No aplicar',
+      };
     }
   }
 
