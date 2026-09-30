@@ -5,6 +5,8 @@ import {
   evaluatePromptSemantically,
   checkAskTrigger,
   isQueryOrExploratoryPrompt,
+  evaluatePromptFull,
+  isAdoptionRequestForTarget,
 } from '../src/core/checker.js';
 import { Playbook } from '../src/core/schema.js';
 
@@ -976,6 +978,89 @@ Sin embargo, viola la regla arquitectónica:
 
       // Pero escribir un archivo en una ruta no autorizada no declarada que coincida con el scope de la regla SÍ debe ser bloqueado
       expect(checkPathViolation('pkg/unauthorized/domain_leak.go', multiLayerPlaybook)).not.toBeNull();
+    });
+
+    it('should not suppress triggeredAsk checkpoints on compound prompts with query prefixes (JD-B-001)', async () => {
+      const askPb: Playbook = {
+        language: 'go',
+        version: 1,
+        updatedAt: '2026-09-30',
+        topology: { pattern: 'Hexagonal', directories: [] },
+        invariants: [],
+        askRules: [
+          {
+            id: 'ask-public-ratelimit',
+            type: 'ask',
+            title: 'Rate Limit en endpoints públicos',
+            surface: 'internal/ports/httpserver',
+            trigger: 'Endpoints públicos no autenticados (POST /login o POST /register)',
+            antiTrigger: 'Health checks o rutas autenticadas',
+            prompt: '¿Deseas incluir middleware de Rate Limit en el endpoint público?',
+            defaultAction: 'Sin rate limit',
+          },
+        ],
+        neverRules: [],
+        snippets: [],
+      };
+
+      // Compound prompt with question/exploratory prefix AND actionable implementation trigger
+      const evaluation = await evaluatePromptFull(
+        '¿Cómo funciona la autenticación? Creá el endpoint POST /login en el proyecto',
+        askPb
+      );
+      expect(evaluation.violation).toBeNull();
+      expect(evaluation.triggeredAsk).not.toBeNull();
+      expect(evaluation.triggeredAsk?.rule.id).toBe('ask-public-ratelimit');
+
+      // Verify isQueryOrExploratoryPrompt behavior with and without actionable verbs
+      expect(isQueryOrExploratoryPrompt('¿Cómo funciona la autenticación?')).toBe(true);
+      expect(isQueryOrExploratoryPrompt('¿Cómo funciona la autenticación? Creá el endpoint POST /login')).toBe(false);
+      expect(isQueryOrExploratoryPrompt('Explicame el router y armá el server')).toBe(false);
+    });
+
+    it('should not falsely classify technical questions using locative "en <tech>" as adoption requests (JD-B-002)', () => {
+      // Questions about internal concepts using locative "en <tech>" must NOT be adoption requests
+      expect(isAdoptionRequestForTarget('¿Cómo se manejan los errores en Gin?', 'gin')).toBe(false);
+      expect(isAdoptionRequestForTarget('¿Qué es un middleware en Gin?', 'gin')).toBe(false);
+      expect(isAdoptionRequestForTarget('Explicame el context en Gin', 'gin')).toBe(false);
+
+      // checkPromptViolation must not flag them
+      expect(checkPromptViolation('¿Cómo se manejan los errores en Gin?', samplePlaybook)).toBeNull();
+      expect(checkPromptViolation('¿Qué es un middleware en Gin?', samplePlaybook)).toBeNull();
+      expect(checkPromptViolation('Explicame el context en Gin', samplePlaybook)).toBeNull();
+
+      // But creation/implementation verbs paired with "en <tech>" MUST be adoption requests
+      expect(isAdoptionRequestForTarget('programar un endpoint en Gin', 'gin')).toBe(true);
+      expect(isAdoptionRequestForTarget('escribir el servicio en Gin', 'gin')).toBe(true);
+      expect(isAdoptionRequestForTarget('hacer la api en Gin', 'gin')).toBe(true);
+      expect(isAdoptionRequestForTarget('crear el server en Gin', 'gin')).toBe(true);
+      expect(isAdoptionRequestForTarget('montar el router en Gin', 'gin')).toBe(true);
+      expect(isAdoptionRequestForTarget('desarrollar el backend en Gin', 'gin')).toBe(true);
+
+      expect(checkPromptViolation('programar un endpoint en Gin', samplePlaybook)).not.toBeNull();
+      expect(checkPromptViolation('escribir el servicio en Gin', samplePlaybook)).not.toBeNull();
+      expect(checkPromptViolation('hacer la api en Gin', samplePlaybook)).not.toBeNull();
+      expect(checkPromptViolation('crear el server en Gin', samplePlaybook)).not.toBeNull();
+      expect(checkPromptViolation('montar el router en Gin', samplePlaybook)).not.toBeNull();
+      expect(checkPromptViolation('desarrollar el backend en Gin', samplePlaybook)).not.toBeNull();
+    });
+
+    it('should recognize English how does ... work queries with multi-word noun phrases as info queries (JD-B-003)', () => {
+      expect(checkPromptViolation('How does route grouping work in Gin?', samplePlaybook)).toBeNull();
+      expect(checkPromptViolation('How does database connection pooling work in GORM?', samplePlaybook)).toBeNull();
+      expect(checkPromptViolation('How does middleware chaining work in Gin?', samplePlaybook)).toBeNull();
+      expect(checkPromptViolation('How does Gin work?', samplePlaybook)).toBeNull();
+    });
+
+    it('should correctly match accented Spanish query keywords like "por qué" in path checks (JD-B-004)', () => {
+      // Questions asking "por qué" about a path should not be flagged as path surface violations
+      expect(checkPromptViolation('¿Por qué no creamos el handler en main.go?', samplePlaybook)).toBeNull();
+      expect(checkPromptViolation('Por qué los handlers no van en pkg/?', samplePlaybook)).toBeNull();
+      expect(checkPromptViolation('Explicame por qué no escribir en cmd/', samplePlaybook)).toBeNull();
+
+      // But an actual command to write or create in that path must still be flagged
+      expect(checkPromptViolation('crear el handler en main.go', samplePlaybook)).not.toBeNull();
+      expect(checkPromptViolation('¿Por qué no va en main? Bueno, hacé el handler en main.go', samplePlaybook)).not.toBeNull();
     });
   });
 });

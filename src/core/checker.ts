@@ -239,8 +239,7 @@ O si no hay conflicto:
   }
 
   const violation = checkPromptViolation(promptText, playbook);
-  const isQuery = isQueryOrExploratoryPrompt(promptText);
-  const triggeredAsk = violation || isQuery ? null : checkAskTrigger(promptText, playbook);
+  const triggeredAsk = violation ? null : checkAskTrigger(promptText, playbook);
   return { violation, triggeredAsk };
 }
 
@@ -270,7 +269,7 @@ export function isAdoptionRequestForTarget(promptText: string, targetToken: stri
   // 1. Direct use prepositions or commands with the target technology
   // (e.g. "con gin", "usando gin", "usá gin", "en gin", "montado sobre chi")
   const directUseRegex = new RegExp(
-    `\\b(?:con|with|usando|using|usar?|us[aá]|uses|utilizando|utilizar?|utiliza|utiliz[aá]|utilices|en|atop|(?:montad[oa]|montar?|mont[aá]|basad[oa]|basar?)\\s+(?:en|sobre))\\s+(?:el\\s+|la\\s+|un\\s+|una\\s+)?(?:framework\\s+|librer[ií]a\\s+|orm\\s+|router\\s+|paquete\\s+|package\\s+)?${escT}(?:s|es)?\\b`,
+    `\\b(?:con|with|usando|using|usar?|us[aá]|uses|utilizando|utilizar?|utiliza|utiliz[aá]|utilices|atop|(?:montad[oa]|montar?|mont[aá]|basad[oa]|basar?)\\s+(?:en|sobre))\\s+(?:el\\s+|la\\s+|un\\s+|una\\s+)?(?:framework\\s+|librer[ií]a\\s+|orm\\s+|router\\s+|paquete\\s+|package\\s+)?${escT}(?:s|es)?\\b`,
     'i'
   );
   if (directUseRegex.test(lower)) {
@@ -301,17 +300,26 @@ export function isAdoptionRequestForTarget(promptText: string, targetToken: stri
   }
 
   // Implementation / Creation verbs anywhere in the prompt targeting the tech
+  // (e.g. "programar en Gin", "escribir en Gin", "hacer en Gin", "crear en Gin", "montar en Gin", "desarrollar en Gin")
   const creationActionRegex = new RegExp(
-    `\\b(?:armar?|arm[aá]|crear?|cre[aá]|hacer?|haz|hac[eé]|implementar?|implement[aá]|construir?|construy[eé]|build|create|implement|make)\\s+.*?(?:\\bcon\\b|\\busando\\b|\\busing\\b|\\bwith\\b|\\ben\\b|\\bsobre\\b).*?\\b${escT}(?:s|es)?\\b`,
+    `\\b(?:armar?|arm[aá]|crear?|cre[aá]|hacer?|haz|hac[eé]|implementar?|implement[aá]|construir?|construy[eé]|programar?|program[aá]|escribir?|escrib[ií]|desarrollar?|desarroll[aá]|montar?|mont[aá]|build|create|implement|make|write|develop)\\s+.*?(?:\\bcon\\b|\\busando\\b|\\busing\\b|\\bwith\\b|\\ben\\b|\\bsobre\\b).*?\\b${escT}(?:s|es)?\\b`,
     'i'
   );
   if (creationActionRegex.test(lower)) {
     return true;
   }
 
+  const reverseCreationRegex = new RegExp(
+    `\\ben\\s+(?:el\\s+|la\\s+|un\\s+|una\\s+)?(?:framework\\s+|librer[ií]a\\s+|orm\\s+|router\\s+|paquete\\s+|package\\s+)?${escT}(?:s|es)?\\b.*?(?:\\b(?:armar?|arm[aá]|crear?|cre[aá]|hacer?|haz|hac[eé]|implementar?|implement[aá]|construir?|construy[eé]|programar?|program[aá]|escribir?|escrib[ií]|desarrollar?|desarroll[aá]|montar?|mont[aá]|build|create|implement|make|write|develop)\\b)`,
+    'i'
+  );
+  if (reverseCreationRegex.test(lower)) {
+    return true;
+  }
+
   // Role attribution: e.g. "Gin para el servidor", "servidor con Gin", "Gin como router", "usá Gin"
   const roleRegex = new RegExp(
-    `\\b(?:${escT}(?:s|es)?\\s+(?:para|for|como|as)\\s+(?:el\\s+|la\\s+)?(?:servidor|server|router|orm|backend|api|proyecto|project)|(?:servidor|server|router|orm|backend|api|endpoint)\\s+(?:con|en|sobre|using|with)\\s+${escT}(?:s|es)?|us[aá]\\s+${escT}(?:s|es)?)\\b`,
+    `\\b(?:${escT}(?:s|es)?\\s+(?:para|for|como|as)\\s+(?:el\\s+|la\\s+)?(?:servidor|server|router|orm|backend|api|proyecto|project)|(?:servidor|server|router|orm|backend|api|endpoint)\\s+(?:con|sobre|using|with)\\s+${escT}(?:s|es)?|us[aá]\\s+${escT}(?:s|es)?)\\b`,
     'i'
   );
   if (roleRegex.test(lower)) {
@@ -353,7 +361,7 @@ export function isExitMigrationOrInfoQuery(promptText: string, targetToken: stri
   // 1. Definition / Explanation / Concepts / Capabilities
   // (e.g. "¿Qué es Gin?", "What is Gin?", "¿Cómo funciona Chi?", "Explicame qué hace GORM", "Documentación de GORM", "¿GORM soporta SQLite?", "Contame sobre Fiber", "No entiendo qué es Gin")
   const definitionAndInfoRegex =
-    /(?:^|[^\wáéíóúñ])(?:qu[eé]\s+es|what\s+is|qu[eé]\s+hace|what\s+does|c[oó]mo\s+funciona|how\s+does(?:\s+\w+)?\s+work|explicame|expl[ií]came|explain|contame|cu[eé]ntame|tell\s+me|documentaci[oó]n|docs?\s+(?:de|for)|qui[eé]n\s+cre[oó]|who\s+created|qui[eé]n\s+mantiene|who\s+maintains|soporta|support|no\s+entiendo\s+qu[eé]|ejemplos?\s+de\s+c[oó]digo|code\s+examples?|solo\s+para\s+aprender|just\s+to\s+learn|tutorial|historia|history|can\s+you\s+explain|sigue\s+teniendo\s+soporte|is\s+\w+\s+(?:maintained|deprecated)|est[aá]\s+(?:obsolet[oa]|deprecad[oa]))(?=[^\wáéíóúñ]|$)/i;
+    /(?:^|[^\wáéíóúñ])(?:qu[eé]\s+es|what\s+is|qu[eé]\s+hace|what\s+does|c[oó]mo\s+funciona|c[oó]mo\s+se\s+\w+|how\s+does(?:\s+[\w\u00C0-\u024F\/-]+)*\s+work|explicame|expl[ií]came|explain|contame|cu[eé]ntame|tell\s+me|documentaci[oó]n|docs?\s+(?:de|for)|qui[eé]n\s+cre[oó]|who\s+created|qui[eé]n\s+mantiene|who\s+maintains|soporta|support|no\s+entiendo\s+qu[eé]|ejemplos?\s+de\s+c[oó]digo|code\s+examples?|solo\s+para\s+aprender|just\s+to\s+learn|tutorial|historia|history|can\s+you\s+explain|sigue\s+teniendo\s+soporte|is\s+\w+\s+(?:maintained|deprecated)|est[aá]\s+(?:obsolet[oa]|deprecad[oa]))(?=[^\wáéíóúñ]|$)/i;
   if (definitionAndInfoRegex.test(lower)) {
     return true;
   }
@@ -417,7 +425,18 @@ export function shouldFlagProhibitedTarget(promptText: string, targetToken: stri
  * rather than an implementation command requesting the prohibited technology.
  */
 export function isQueryOrExploratoryPrompt(promptText: string): boolean {
-  return isExitMigrationOrInfoQuery(promptText, '') && !isAdoptionRequestForTarget(promptText, '');
+  if (!promptText) return false;
+  if (!isExitMigrationOrInfoQuery(promptText, '')) return false;
+
+  const hasActionableVerbs =
+    /(?:^|[^\wáéíóúñ])(?:crear?|cre[aá]|cre[eé](?:mos)?|armar?|arm[aá]|arm[eé](?:mos)?|implementar?|implement[aá]|implement[eé](?:mos)?|construir?|construy[eé](?:mos)?|hacer?|haz|hac[eé](?:mos)?|hag[aá](?:mos)?|escribir?|escrib[ií]|escrib[aá](?:mos)?|agregar?|agreg[aá]|agregu[eé](?:mos)?|a[nñ]adir?|a[nñ]ad[eé]|a[nñ]ad[aá](?:mos)?|modificar?|modific[aá]|modifiqu[eé](?:mos)?|actualizar?|actualiz[aá]|actualic[eé](?:mos)?|desarrollar?|desarroll[aá]|desarroll[eé](?:mos)?|generar?|gener[aá]|gener[eé](?:mos)?|montar?|mont[aá]|mont[eé](?:mos)?|programar?|program[aá]|program[eé](?:mos)?|pon[eé]r?|pon|pong[aá](?:mos)?|met[eé]r?|met[aá](?:mos)?|build|create|implement|make|write|add|update|develop|generate|armal[oa]|hacel[oa]|creal[oa]|implemental[oa]|instalal[oa]|agregal[oa]|usal[oa]|utilizal[oa]|metel[oa]|ponel[oa]|sumal[oa]|build\s+it|use\s+it|install\s+it|add\s+it)(?=[^\wáéíóúñ]|$)/i.test(
+      promptText
+    );
+  if (hasActionableVerbs) {
+    return false;
+  }
+
+  return !isAdoptionRequestForTarget(promptText, '');
 }
 
 /**
@@ -651,8 +670,11 @@ export function checkPromptViolation(
         if (phrase.regex.test(lowerPrompt) && desc.includes(phrase.forbiddenInDesc)) {
           // Si el prompt es una consulta exploratoria o teórica (preguntas de por qué, explicame)
           // y no contiene una orden imperativa de creación/escritura en esa ruta, no es violación
-          const isQueryAboutPath = /\b(?:por\s+qu[eé]|why|qu[eé]\s+es|what\s+is|explicame|explain|diferencia|pros\s+y\s+contras)\b/i.test(lowerPrompt);
-          const hasPathImplementation = /\b(?:cre[aá]|crear?|escrib[ií]|escribir?|arm[aá]|armar?|hac[eé]|hacer?|pon[eé]|poner?|met[eé]|meter?|coloc[aá]|colocar?|build|create|write|put)\s+.*?\b(?:en\s+main|en\s+pkg|en\s+cmd|en\s+src\/routes|en\s+src\/controllers|en\s+la\s+ra[ií]z)\b/i.test(lowerPrompt);
+          const isQueryAboutPath =
+            /(?:^|[^\wáéíóúñ])(?:por\s+qu[eé]|why|qu[eé]\s+es|what\s+is|explicame|explain|diferencia|pros\s+y\s+contras)(?=[^\wáéíóúñ]|$)/i.test(
+              lowerPrompt
+            );
+          const hasPathImplementation = /(?<!\b(?:no|sin|evitar?|evita)\s+)\b(?:cre[aá]|crear?|escrib[ií]|escribir?|arm[aá]|armar?|hac[eé]|hacer?|pon[eé]|poner?|met[eé]|meter?|coloc[aá]|colocar?|build|create|write|put)\s+.*?\b(?:en\s+main|en\s+pkg|en\s+cmd|en\s+src\/routes|en\s+src\/controllers|en\s+la\s+ra[ií]z)\b/i.test(lowerPrompt);
           if (isQueryAboutPath && !hasPathImplementation) {
             continue;
           }
