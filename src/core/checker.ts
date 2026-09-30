@@ -23,7 +23,7 @@ export const TECHNOLOGY_FAMILIES: Record<
 > = {
   gin: {
     family: 'go-http-frameworks',
-    members: ['gin', 'chi', 'echo', 'fiber', 'gorilla/mux', 'gorilla mux', 'mux', 'beego', 'iris', 'fasthttp', 'revel'],
+    members: ['gin', 'chi', 'echo', 'fiber', 'gorilla/mux', 'gorilla mux', 'beego', 'iris', 'fasthttp', 'revel'],
     stdlib: 'net/http',
     description: 'routers o frameworks HTTP externos en Go',
   },
@@ -205,7 +205,7 @@ export function checkPromptViolation(
 
   // 1. Check explicit bypass requests ("ignora el playbook", "no uses el playbook", "skip playbook")
   const bypassPattern =
-    /\b(?:ignor[aá]|ignore|salte[aá]|saltate|salteate|omit[eé]|desestim[aá]|olvid[aá]|olv[ií]date|prescinde|no\s+uses?|don't\s+use|bypass|skip)\s+(?:de\s+|del\s+|el\s+|the\s+)?playbook\b/i;
+    /\b(?:ignor(?:[aá]|ar|e)?|salte(?:[aá]|ar|ate|tate)?|omit(?:[eé]|ir)?|desestim(?:[aá]|ar)?|olvid(?:[aá]|ar|ate|[ií]date)?|prescind(?:[eé]|ir)?|no\s+(?:uses?|utilices?|seguir)|don't\s+use|bypass|skip|apagar|desactivar)\s+(?:de\s+|del\s+|el\s+|the\s+)?playbook\b|\bhacelo\s+sin\s+(?:el\s+)?playbook\b/i;
   if (bypassPattern.test(lowerPrompt)) {
     const firstRule = playbook.invariants[0] || (playbook.neverRules && playbook.neverRules[0]);
     if (firstRule) {
@@ -219,7 +219,7 @@ export function checkPromptViolation(
 
   // 2. Check bypass attempts on Confirmation Checkpoints (Caso 21: "no preguntes", "sin consultar")
   const bypassCheckpoints =
-    /\b(?:sin\s+(?:preguntar|consultar|confirmar|pedir\s+confirmaci[oó]n)|no\s+(?:me\s+)?(?:preguntes|consultes)|without\s+asking|don't\s+ask|no\s+confirm)\b/i;
+    /\b(?:sin\s+(?:preguntar|consultar|confirmar|pedir\s+confirmaci[oó]n)|no\s+(?:me\s+)?(?:preguntes|consultes|pidas\s+confirmaci[oó]n)|without\s+asking|don't\s+ask|no\s+confirm|skip\s+confirm(?:ation)?|auto-confirm)\b/i;
   if (bypassCheckpoints.test(lowerPrompt)) {
     const isAgent = playbook.language === 'agents-preferences' || playbook.language === 'agents';
     const targetAsk =
@@ -274,16 +274,18 @@ export function checkPromptViolation(
         }
       }
 
-      // 3.3 Match words following keywords like "no usar", "prohibido", "evitar", "vetar", "como"
+      // 3.3 Match words following keywords like "no usar", "prohibido", "evitar", "vetar"
       const matchWords = never.description.matchAll(
-        /(?:no\s+usar|prohibido|evitar|vetar|como|alternativas?)\s+(?:el\s+framework\s+|la\s+librer[ií]a\s+|el\s+paquete\s+|el\s+orm\s+|el\s+router\s+)?([a-zA-Z0-9_\-\/]+)/gi
+        /(?:no\s+usar|prohibido|evitar|vetar|alternativas?|(?:como|e\.g\.)(?:\s+por\s+ejemplo)?)\s+(?:el\s+framework\s+|la\s+librer[ií]a\s+|el\s+paquete\s+|el\s+orm\s+|el\s+router\s+)?([a-zA-Z0-9_\-\/]+)/gi
       );
+      const stopWords = new Set([
+        'el', 'la', 'los', 'las', 'un', 'una', 'unos', 'unas',
+        'cualquier', 'otros', 'otras', 'otro', 'otra',
+        'por', 'para', 'de', 'del', 'con', 'en', 'ejemplo', 'ejemplos', 'salvo', 'excepto'
+      ]);
       for (const m of matchWords) {
         const targetWord = m[1].toLowerCase();
-        if (
-          targetWord.length >= 3 &&
-          !['el', 'la', 'los', 'las', 'un', 'una', 'cualquier', 'otros', 'otra'].includes(targetWord)
-        ) {
+        if (targetWord.length >= 3 && !stopWords.has(targetWord)) {
           const regex = new RegExp(`\\b${targetWord}(?:s|es)?\\b`, 'i');
           if (regex.test(lowerPrompt)) {
             return {
@@ -328,6 +330,14 @@ export function checkPromptViolation(
           ) {
             for (const member of fam.members) {
               if (member === key) continue; // ya evaluado en 3.1
+
+              // Exclusiones de contexto para falsos positivos de palabras comunes:
+              // a) "echo": Si se usa como sustantivo o verbo en inglés ("hacer echo", "echo payload", "echo endpoint")
+              if (member === 'echo') {
+                const isEchoFramework = /\b(?:con\s+echo|usando\s+echo|framework\s+echo|router\s+echo|labstack\/echo|echo\s+(?:framework|router))\b/i.test(lowerPrompt);
+                if (!isEchoFramework) continue;
+              }
+
               const memberEscaped = member.replace(/[\/\\^$*+?.()|[\]{}]/g, '\\$&');
               const memberRegex = new RegExp(`\\b${memberEscaped}(?:s|es)?\\b`, 'i');
               if (memberRegex.test(lowerPrompt)) {
@@ -428,7 +438,7 @@ export function checkPathViolation(
         desc.includes('only in') ||
         desc.includes('no crear handlers en')
       ) {
-        const isAllowed = normalized.startsWith(allowedPrefix);
+        const isAllowed = normalized === allowedPrefix || normalized.startsWith(allowedPrefix + '/');
         if (!isAllowed) {
           return {
             rule: inv,
@@ -444,7 +454,8 @@ export function checkPathViolation(
   for (const never of neverRules) {
     if (never.surface && never.surface !== 'general' && never.surface !== 'dependencies') {
       const forbiddenSurface = never.surface.replace(/^\.?\//, '').replace(/\/$/, '');
-      if (normalized.startsWith(forbiddenSurface)) {
+      const isForbidden = normalized === forbiddenSurface || normalized.startsWith(forbiddenSurface + '/');
+      if (isForbidden) {
         return {
           rule: never,
           reason: `La ruta "${normalized}" escribe dentro de la superficie prohibida "${never.surface}".`,
@@ -482,7 +493,11 @@ export function checkAskTrigger(
       }
 
       // Rutas autenticadas, tokens, bearer, me
-      const isAuth = /\b(?:autenticad[oa]s?|bearer|jwt|token|auth|privad[oa]s?|intern[ao]s?|\/me)\b/i.test(lowerPrompt);
+      // Excluir endpoints de emisión de credenciales (login, signup, register) para no suprimir falsamente los asks públicos
+      const isCredentialIssuing = /\b(?:login|signup|register|registro|iniciar\s+sesi[oó]n)\b/i.test(lowerPrompt);
+      const isAuth =
+        !isCredentialIssuing &&
+        /\b(?:autenticad[oa]s?|bearer|jwt|token|auth|privad[oa]s?|intern[ao]s?|\/me)\b/i.test(lowerPrompt);
       if (isAuth && (antiTrigger.includes('autenticad') || antiTrigger.includes('internas') || antiTrigger.includes('authenticated'))) {
         continue;
       }
