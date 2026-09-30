@@ -105,30 +105,37 @@ A partir de la versión v0.6.0, `gentle-playbook` desacopla el almacenamiento de
 
 ---
 
-### 2. Gobernanza Semántica y Prevención de Violaciones (Issue #12)
-Para garantizar que el modelo no desobedezca las reglas cuando el prompt contradice el reglamento o intenta usar tecnologías prohibidas:
+### 2. Gobernanza Semántica, Resolución de Conflictos y Asks Interactivos (Issue #12, #14)
+Para garantizar que el modelo no desobedezca las reglas cuando el prompt contradice el reglamento o intenta usar tecnologías prohibidas, sin caer en salidas mudas ni canibalizar la entrega de código:
 
-1. **Pre-vuelo Semántico en `input`:**
-   - Cuando el usuario ingresa un prompt, el Agente/LLM evalúa semánticamente el significado de la petición contra las reglas activas del playbook (`evaluatePromptSemantically`).
-   - Si detecta que el usuario pide usar una tecnología prohibida (por nombre, sinónimo o familia), eludir un checkpoint (`"sin preguntar"`), o colocar código fuera de la topología exclusiva, salta un diálogo interactivo en el TUI:
-     ```text
-     ⚠️ Conflicto con Playbook
-     Esta acción entra en conflicto con GO:
-     Regla [NO-GIN]: No usar el framework Gin; usar net/http de la biblioteca estándar.
-     Motivo: El prompt solicita usar una librería externa para la capa web.
+1. **Pre-vuelo Semántico en `input` & Adopción en Pi (`action: 'transform'`):**
+   - Cuando el usuario ingresa un prompt, el motor evalúa semánticamente la intención contra las reglas activas del playbook (`evaluatePromptFull`).
+   - El resultado clasifica formalmente la intención con tipado fuerte (`ViolationKind: checkpoint_bypass | playbook_bypass | surface_conflict | prohibited_dependency | agent_governance_violation`).
+   - Cuando se transforma el prompt con directivas de redirección o resoluciones de Asks, la extensión retorna formalmente `{ action: 'transform', text: event.text }`, cumpliendo el contrato del runner de Pi para asegurar que las directivas se apliquen de forma efectiva.
 
-     ¿Deseas continuar permitiendo esta excepción? (Sí / No)
-     ```
-   - Si el usuario elige **No**: la acción se cancela de inmediato, protegiendo las normas del proyecto.
-   - Si elige **Sí**: se autoriza la excepción conscientemente para ese turno.
+2. **Resolución de Conflictos sin Abortos Mudos (Anti-Silent Exit):**
+   - **En modo interactivo (TUI):** Si el prompt entra en conflicto con una regla de topología o dependencia vetada, salta un selector estructurado:
+     1. `🛡️ Redirigir a la arquitectura canónica [Recomendado]`: Implementa el feature en la superficie permitida del playbook sin tecnologías prohibidas.
+     2. `⚠️ Permitir excepción por esta única vez`: Autoriza conscientemente la desviación.
+     3. `❌ Cancelar la operación`: Detiene la acción protegiendo las normas.
+   - **En modo desatendido / headless (`--print`):** **Nunca se produce un aborto mudo (`exit 0` en blanco)**. El sistema inyecta una advertencia de gobernanza visible orientando al modelo a generar el feature en la superficie canónica y detallar la decisión al inicio de su respuesta.
 
-2. **Aprobación Semántica en Checkpoints de Código:**
-   - Si el usuario solicita explícitamente una funcionalidad sujeta a un `AskRule` (ej: *"hacé el login y ponele rate limiter"*), el agente reconoce la **aprobación semántica anticipada** y procede a implementar la feature utilizando el snippet/receta canónica sin formular preguntas redundantes.
-   - En **Gobernanza de Agente** (`agents-preferences`) o **Prohibiciones** (`NeverRules`), cualquier intento de elusión por texto (*"sin consultar"*, *"no preguntes"*) es interceptado obligatoriamente por el TUI.
+3. **Manejo Interactivo de Asks sin Inanición del Feature Base:**
+   - Si se activa una regla condicional (`AskRule`, ej: rate limiting en login público):
+     - **En TUI**: Se activa la confirmación interactiva (`ctx.ui.confirm`). Si el usuario dice **Sí**, se instruye construir el feature con el extra aprobado. Si dice **No**, se instruye construirlo **sin el extra** (default).
+     - **En Headless**: Se inyecta la directiva con la acción por defecto.
+   - **Garantía de Entrega**: En todos los casos, **el feature base solicitado se implementa siempre**, eliminando el fallo donde el modelo solo preguntaba y dejaba el proyecto vacío.
 
-3. **Cinturón de Seguridad en `tool_call`:**
-   - Antes de ejecutar cualquier herramienta de escritura (`write` o `edit`), `checkPathViolation` valida que la ruta de destino no viole la superficie exclusiva de una regla invariante o superficie vetada.
-   - Neutraliza automáticamente intentos de *Path Traversal* (`../../`) y desvíos por rutas absolutas mediante resolución canónica contra el workspace.
+4. **Defensa Estricta ante Bypass de Checkpoints:**
+   - Intentos en el prompt de eludir controles (*"sin consultar"*, *"no preguntes"*, *"sin playbook"*) son catalogados como intentos de bypass.
+   - Exigen confirmación interactiva en TUI y **fallan cerrado (Fail-Closed)** en entornos headless emitiendo un error explícito.
+
+5. **Afinidad Dinámica de Superficies Multicapa (Sin Deadlock de Escritura):**
+   - `checkPathViolation` evalúa las superficies declaradas en el playbook dinámicamente. Si un archivo pertenece legítimamente a otra capa de la arquitectura (ej: repositorios en `internal/adapters/db` vs lógica en `internal/domain`), el sistema no genera falsos positivos ni deadlocks cruzados.
+
+6. **Supervisión de Herramientas de Agente en `tool_call` & Fail-Closed:**
+   - Las reglas de `Agent Preferences` sobre herramientas (`tools:write`, `tools:edit`, `tools:all`) se ejecutan dinámicamente en tiempo de ejecución de la herramienta (`never` bloquea terminante, `ask` e `invariants` exigen autorización).
+   - Ante cualquier excepción imprevista de runtime, la barrera aplica política **Fail-Closed**, bloqueando la ejecución para evitar escrituras no autorizadas.
 
 ---
 

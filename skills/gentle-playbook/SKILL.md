@@ -69,8 +69,13 @@ Or `/gentle-playbook-add [lang|agents]`.
 - Shows a confirmation preview and saves it to the playbook.
 
 ### Semantic Pre-flight & Write Enforcement
-- **Prompt Pre-flight:** The agent semantically evaluates whether incoming user prompts violate active rules or attempt to bypass checkpoints (`"no preguntes"`), displaying interactive confirmation dialogs in TUI before proceeding.
-- **Write Barrier:** Tool execution (`write`/`edit`) enforces canonical topology and intercepts unauthorized paths or path traversal (`../../`) before disk mutation.
+- **Prompt Pre-flight:** The agent semantically evaluates whether incoming user prompts violate active rules, attempt to bypass checkpoints (`"sin consultar"`, `"no preguntes"`), or trigger conditional Ask rules.
+  - When directives are appended or Asks resolved, the extension returns `{ action: 'transform', text: event.text }`, guaranteeing native prompt mutation adoption in Pi.
+  - In headless / `--print` mode, conflicts redirect visibly to the canonical surface instead of silently aborting (`exit 0`).
+  - Asks prompt interactively via `ui.confirm` without starving base feature delivery; the base feature is always implemented.
+- **Write Barrier (`tool_call`):** Tool execution (`write`/`edit`) enforces canonical topology and intercepts unauthorized paths or prefix spoofing (`../../`).
+  - Evaluates `Agent Preferences` (`tools:write`, `tools:edit`, `tools:all`) across `never`, `ask`, and `invariant` rule types.
+  - Applies a strict **Fail-Closed** security policy: any unexpected exception in the governance barrier blocks the tool call to prevent unauthorized file mutation.
 
 ### Managing & Deleting Rules Interactively
 Run:
