@@ -1,10 +1,4 @@
-import {
-  Playbook,
-  InvariantRule,
-  AskRule,
-  NeverRule,
-  Snippet,
-} from './schema.js';
+import { Playbook } from './schema.js';
 import {
   PlaybookDiffResult,
   InvariantDiff,

@@ -1,4 +1,4 @@
-import { InvariantRule, AskRule, NeverRule, RuleType, AGENTS_PREFERENCES_ID } from './schema.js';
+import { RuleType, AGENTS_PREFERENCES_ID } from './schema.js';
 
 export interface SynthesizedRule {
   type: RuleType;

@@ -1,7 +1,6 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { Playbook } from '../core/schema.js';
-import { detectTopology } from './topology.js';
 import { runAgentExtraction, AgentExtractorOptions } from './agent-extractor.js';
 
 export interface ExtractOptions extends AgentExtractorOptions {}

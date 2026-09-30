@@ -4,19 +4,16 @@ import { Type } from 'typebox';
 import { PlaybookStorage } from './core/storage.js';
 import { detectProjectLanguage, detectProjectLanguages } from './extract/extractor.js';
 import { runAgentExtraction } from './extract/agent-extractor.js';
-import { computePlaybookDiff, mergePlaybooks, RuleResolution, PlaybookDiffResult } from './core/diff.js';
+import { mergePlaybooks, RuleResolution, PlaybookDiffResult } from './core/diff.js';
 import { computeSemanticPlaybookDiff, resolveConflictWithAI } from './core/semantic-diff.js';
 import { formatPlaybookForDisplay, formatPlaybookForTool, formatAgentPreferencesForTool } from './core/parser.js';
 import { detectPromptInjection } from './core/security.js';
 import { InvariantRule, AskRule, NeverRule, RuleType, Playbook, AGENTS_PREFERENCES_ID } from './core/schema.js';
 import { buildSynthesisPrompt, parseSynthesizedRule, SynthesizedRule, isProhibitionDescription, ProhibitionScope } from './core/synthesizer.js';
 import {
-  checkPromptViolation,
   checkPathViolation,
-  evaluatePromptSemantically,
   evaluatePromptFull,
   checkAskTrigger,
-  AskTriggerMatch,
   PromptEvaluationResult,
 } from './core/checker.js';
 import { getLanguageMenuLabels, resolveLanguage } from './core/languages.js';
