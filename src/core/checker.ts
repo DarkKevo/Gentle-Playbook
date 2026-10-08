@@ -252,14 +252,14 @@ export function isAdoptionRequestForTarget(promptText: string, targetToken: stri
   const lower = promptText.toLowerCase().trim();
   const escT = targetToken.toLowerCase().replace(/[\/\\^$*+?.()|[\]{}]/g, '\\$&');
 
-  // Educational / Learning guard:
-  // e.g. "Mostrame ejemplos de código en Gin solo para aprender", "código en Gin para aprender"
-  const isEducationalContext =
-    /\b(?:ejemplos?\s+de\s+c[oó]digo|code\s+examples?|solo\s+para\s+aprender|just\s+to\s+learn|para\s+estudiar|para\s+aprender|fines\s+educativos)\b/i.test(lower);
+  // Educational / Learning / Comparative non-implementation guard:
+  // e.g. "Mostrame ejemplos de código en Gin solo para aprender", "código en Gin para aprender", "solo comparar, no implementar"
+  const isEducationalOrComparativeContext =
+    /\b(?:ejemplos?\s+de\s+c[oó]digo|code\s+examples?|solo\s+para\s+aprender|just\s+to\s+learn|para\s+estudiar|para\s+aprender|fines\s+educativos|solo\s+comparar|just\s+compar(?:e|ing)|no\s+implementar)\b/i.test(lower);
   const cliticActionRegex =
     /\b(?:armal[oa]|hacel[oa]|creal[oa]|implemental[oa]|instalal[oa]|agregal[oa]|usal[oa]|utilizal[oa]|metel[oa]|ponel[oa]|sumal[oa]|build\s+it|use\s+it|install\s+it|add\s+it)\b/i;
   if (
-    isEducationalContext &&
+    isEducationalOrComparativeContext &&
     !cliticActionRegex.test(lower) &&
     !/\b(?:instal[aá]|agreg[aá]|al\s+proyecto|to\s+the\s+project)\b/i.test(lower)
   ) {
@@ -327,20 +327,39 @@ export function isAdoptionRequestForTarget(promptText: string, targetToken: stri
   }
 
   // 4. Migration TO the target technology (Destination = targetToken)
-  // e.g. "migrar a Gin", "migrar hacia GORM", "migrate to Gin", "reemplazar net/http por Gin", "replace database/sql with GORM"
+  // e.g. "migrar a Gin", "migrá a GORM", "migremos a Echo", "migren a Chi", "migrate to Gin"
+  // "cambiate a Echo", "cambiá a Echo", "cambiemos a Echo", "pasemos a Fiber", "llevemos el proyecto a Chi"
+  // "Cómo migrar de net/http a Gin", "Reemplazar net/http por Gin"
   const migrateToRegex = new RegExp(
-    `\\b(?:migrar?|migraci[oó]n|migrate|migrating)\\s+.*?(?:\\ba\\b|\\bhacia\\b|\\bto\\b|\\binto\\b)\\s+(?:el\\s+|la\\s+)?(?:framework\\s+|orm\\s+)?${escT}(?:s|es)?\\b`,
+    `\\b(?:migr(?:ar?|[aá]|e|emos|en)|migraci[oó]n|migrate|migrating|cambi(?:ar?|[aá]|ate|[eé]|emos|en)|pas(?:ar?|[aá]|ame|[eé]|emos|en)|llev(?:ar?|[aá]|emos|en)|mov(?:er?|[eé]|ete|amos|an))\\s+.*?(?:\\ba\\b|\\bhacia\\b|\\bto\\b|\\binto\\b)\\s+(?:el\\s+|la\\s+)?(?:framework\\s+|orm\\s+)?${escT}(?:s|es)?\\b`,
     'i'
   );
   if (migrateToRegex.test(lower)) {
     return true;
   }
 
+  // Reemplazar X por Gin (donde Gin es el DESTINO del reemplazo, ej: "Reemplazar net/http por Gin")
   const replaceWithRegex = new RegExp(
-    `\\b(?:reemplazar?|replace|cambiar?|change)\\s+.*?(?:\\bpor\\b|\\bwith\\b|\\bto\\b)\\s+(?:el\\s+|la\\s+)?(?:framework\\s+|orm\\s+)?${escT}(?:s|es)?\\b`,
+    `\\b(?:reemplaz(?:ar?|[aá]|[eé]|emos|en)|replace|cambi(?:ar?|[aá]|ate|[eé]|emos|en)|change)\\s+(?:el\\s+|la\\s+|un\\s+|una\\s+)?(?:framework\\s+|orm\\s+|router\\s+)?[a-zA-Z0-9_\\-\\.\\/]+\\s+(?:\\bpor\\b|\\bwith\\b|\\bto\\b|\\ba\\b)\\s+(?:el\\s+|la\\s+)?(?:framework\\s+|orm\\s+)?${escT}(?:s|es)?\\b`,
     'i'
   );
   if (replaceWithRegex.test(lower)) {
+    // Si la fuente del reemplazo es el mismo targetToken (ej: "Reemplazar Gin por net/http"), es salida, no adopción
+    const isReplacingFromTarget = new RegExp(
+      `\\b(?:reemplaz(?:ar?|[aá]|[eé]|emos|en)|replace|cambi(?:ar?|[aá]|ate|[eé]|emos|en)|change)\\s+(?:el\\s+|la\\s+|un\\s+|una\\s+)?(?:framework\\s+|orm\\s+|router\\s+)?${escT}(?:s|es)?\\s+(?:por|with|to|a)\\b`,
+      'i'
+    ).test(lower);
+    if (!isReplacingFromTarget) {
+      return true;
+    }
+  }
+
+  // Migración inversa explícita: "migrar de X a Gin" (donde Gin es destino)
+  const reverseMigrateRegex = new RegExp(
+    `\\b(?:migr(?:ar?|[aá]|e|emos|en)|migraci[oó]n|pas(?:ar?|[aá]|e|emos|en))\\s+(?:de|desde|from)\\s+[a-zA-Z0-9_\\-\\.\\/]+\\s+(?:\\ba\\b|\\bhacia\\b|\\bto\\b)\\s+(?:el\\s+|la\\s+)?(?:framework\\s+|orm\\s+)?${escT}(?:s|es)?\\b`,
+    'i'
+  );
+  if (reverseMigrateRegex.test(lower)) {
     return true;
   }
 
@@ -382,22 +401,38 @@ export function isExitMigrationOrInfoQuery(promptText: string, targetToken: stri
     return true;
   }
 
-  // 3. Comparisons, pros & cons, alternatives
-  // (e.g. "Diferencias entre Chi y net/http", "Pros y contras de GORM", "Alternativas a Gin")
+  // 3. Comparisons, pros & cons, alternatives, questions of convenience
+  // (e.g. "Diferencias entre Chi y net/http", "Pros y contras de GORM", "Alternativas a Gin", "¿Gin es mejor que net/http?", "solo comparar, no implementar")
   const comparisonRegex =
-    /\b(?:diferencias?\s+entre|difference\s+between|pros\s+y\s+contras|pros\s+and\s+cons|comparar|comparativa|versus|\bvs\.?\b|alternativas?\s+a|alternatives?\s+to|qu[eé]\s+opin[aá]s\s+de|what\s+do\s+you\s+think\s+about)\b/i;
+    /\b(?:diferencias?\s+entre|difference\s+between|pros\s+y\s+contras|pros\s+and\s+cons|comparar|comparativa|versus|\bvs\.?\b|alternativas?\s+a|alternatives?\s+to|qu[eé]\s+opin[aá]s\s+de|what\s+do\s+you\s+think\s+about|es\s+mejor\s+que|is\s+better\s+than|conviene(?:\s+\w+)?\s+o\b|solo\s+comparar|just\s+compar(?:e|ing))\b/i;
   if (comparisonRegex.test(lower)) {
     return true;
   }
 
-  // 4. Exit migration: Migrating AWAY from targetToken to something else
-  // e.g. "Cómo migrar de Gin a net/http", "Reemplazar GORM por SQL puro", "Quitar Chi"
+  // 4. Dependency audit / Inspection queries
+  // (e.g. "revisá si hay Gin en el go.mod", "chequeá si está GORM", "fijate si usamos Gin", "¿tenemos Gin instalado?", "ver si hay Gin")
+  const auditRegex =
+    /\b(?:revis[aá]|revisar?|revisemos|cheque[aá]|chequear?|chequeemos|check|fijate|fijarse|fijemonos|ver\s+si|hay|is\s+there|tenemos|usamos)\s+.*?(?:instalad[oa]|en\s+(?:el\s+)?go\.mod|en\s+(?:el\s+)?package\.json|en\s+(?:el\s+)?requirements|en\s+el\s+proyecto|dependencia|dependencies)\b/i;
+  const directInquiryRegex = new RegExp(
+    `\\b(?:fijate\\s+si\\s+usamos|tenemos|hay|revis[aá]\\s+si\\s+est[aá]|cheque[aá]\\s+si\\s+est[aá])\\s+(?:el\\s+|la\\s+|un\\s+|una\\s+)?(?:framework\\s+|orm\\s+)?${escT}(?:s|es)?\\b`,
+    'i'
+  );
+  if (auditRegex.test(lower) || directInquiryRegex.test(lower)) {
+    return true;
+  }
+
+  // 5. Exit migration: Migrating AWAY from targetToken to something else or removing it
+  // e.g. "Cómo migrar de Gin a net/http", "Reemplazar GORM por SQL puro", "migremos de Gin a net/http", "reemplacemos Gin por net/http", "sacá Gin del proyecto", "borrá Gin", "limpiá Gin"
   if (targetToken) {
-    const exitMigrationRegex = new RegExp(
-      `\\b(?:migrar?\\s+(?:de|desde|from)|migraci[oó]n\\s+(?:de|desde)|reemplazar?\\s+(?:el\\s+|la\\s+)?(?:framework\\s+|orm\\s+)?${escT}(?:s|es)?\\s+(?:por|with|para)|eliminar?\\s+${escT}|remover?\\s+${escT}|quitar?\\s+${escT}|sacar?\\s+${escT})\\b`,
+    const isExitFromTarget = new RegExp(
+      `\\b(?:migr(?:ar?|[aá]|e|emos|en)\\s+(?:de|desde|from)|migraci[oó]n\\s+(?:de|desde)|pas(?:ar?|[aá]|e|emos|en)\\s+(?:de|desde)|(?:eliminar?|elimin[aá]|eliminemos|remover?|remov[eé]|removamos|quitar?|quit[aá]|quitemos|sacar?|sac[aá]|saquemos|borrar?|borr[aá]|borremos|limpiar?|limpi[aá]|limpiemos))\\s+(?:el\\s+|la\\s+)?(?:framework\\s+|orm\\s+)?${escT}(?:s|es)?\\b`,
       'i'
-    );
-    if (exitMigrationRegex.test(lower)) {
+    ).test(lower);
+    const isReplacingFromTarget = new RegExp(
+      `\\b(?:reemplaz(?:ar?|[aá]|[eé]|emos|en)|replace)\\s+(?:el\\s+|la\\s+)?(?:framework\\s+|orm\\s+)?${escT}(?:s|es)?\\s+(?:por|with|para|a)\\b`,
+      'i'
+    ).test(lower);
+    if (isExitFromTarget || isReplacingFromTarget) {
       return true;
     }
   }
@@ -411,10 +446,47 @@ export function isExitMigrationOrInfoQuery(promptText: string, targetToken: stri
  * Returns false if it is purely informational/query or exit migration without adoption orders.
  */
 export function shouldFlagProhibitedTarget(promptText: string, targetToken: string): boolean {
-  const isAdoption = isAdoptionRequestForTarget(promptText, targetToken);
-  const isInfo = isExitMigrationOrInfoQuery(promptText, targetToken);
+  if (!promptText) return false;
+  const lower = promptText.toLowerCase().trim();
+  const escT = targetToken.toLowerCase().replace(/[\/\\^$*+?.()|[\]{}]/g, '\\$&');
 
-  if (isInfo && !isAdoption) {
+  // Si es una orden de migración de salida de Gin hacia otra cosa ("reemplacemos Gin por net/http", "borrá Gin del proyecto")
+  // debe evaluarse con precedencia antes de cualquier chequeo de adopción:
+  const isExitOrder = new RegExp(
+    `\\b(?:migr(?:ar?|[aá]|e|emos|en)\\s+(?:de|desde)|pas(?:ar?|[aá]|e|emos|en)\\s+(?:de|desde)|(?:reemplaz(?:ar?|[aá]|e)|reemplac(?:[eé]|emos|en))\\s+(?:el\\s+|la\\s+)?(?:framework\\s+|orm\\s+)?${escT}(?:s|es)?\\s+(?:por|with|a)|borr(?:ar?|[aá]|e|emos|en)\\s+(?:el\\s+|la\\s+)?(?:framework\\s+|orm\\s+)?${escT}|limpi(?:ar?|[aá]|e|emos|en)\\s+(?:el\\s+|la\\s+)?(?:framework\\s+|orm\\s+)?${escT})\\b`,
+    'i'
+  ).test(lower);
+  const isMigratingToTarget = new RegExp(
+    `\\b(?:migr(?:ar?|[aá]|e|emos|en)|migraci[oó]n|(?:reemplaz(?:ar?|[aá]|e)|reemplac(?:[eé]|emos|en))|replace)\\s+.*?(?:\\ba\\b|\\bhacia\\b|\\bto\\b|\\bpor\\b)\\s+(?:el\\s+|la\\s+)?(?:framework\\s+|orm\\s+)?${escT}(?:s|es)?\\b`,
+    'i'
+  ).test(lower);
+  if (isExitOrder && !isMigratingToTarget) {
+    return false;
+  }
+
+  // Explicit negation guard: e.g. "no uses Gin", "sin Gin", "sin usar Gin", "no quiero Gin", "evitá GORM", "nada de Gin", "descartá Gin", "rechazá Gin"
+  // If the prompt explicitly negates targetToken AND does not have an independent adoption order for it
+  const explicitNegation = new RegExp(
+    `\\b(?:sin(?:\\s+(?:usar?|us[aá]|utilizar?|utiliz[aá]))?|without(?:\\s+using)?|no\\s+(?:quiero|queremos|uses?|usar?|utilices?|utilizar?|apliques?|aplicar?|meter?|metas?|poner?|pongas?)|nada\\s+de|cero|evit[aá]|evitar?|prohibir?|prohibid[oa]|descart[aá]|descartar?|rechaz[aá]|rechazar?)\\s+(?:el\\s+|la\\s+|un\\s+|una\\s+)?(?:framework\\s+|librer[ií]a\\s+|orm\\s+|router\\s+|paquete\\s+|package\\s+)?${escT}(?:s|es)?\\b`,
+    'i'
+  );
+  if (explicitNegation.test(lower)) {
+    // Check if there is also a positive adoption order for this specific target
+    // e.g. "no uses Gin... bueno, armalo con Gin" vs "no uses Gin, usá net/http"
+    const positiveAdoption = new RegExp(
+      `\\b(?:armal[oa]|hacel[oa]|creal[oa]|implemental[oa]|instalal[oa]|agregal[oa]|usal[oa]|utilizal[oa]|metel[oa]|ponel[oa]|sumal[oa]|build\\s+it|use\\s+it|install\\s+it|add\\s+it)\\s+.*?(?:con|using|with|en)\\s+.*?(?:${escT})\\b|\\b(?:con|with|usando|using|us[aá]|utiliz[aá]|met[eé]|pon[eé]|agreg[aá]|instal[aá])\\s+(?:el\\s+|la\\s+|un\\s+|una\\s+)?(?:framework\\s+|orm\\s+)?${escT}\\b`,
+      'i'
+    );
+    // If it only negates, it should NOT flag
+    if (!positiveAdoption.test(lower)) {
+      return false;
+    }
+  }
+
+  const isAdoption = isAdoptionRequestForTarget(promptText, targetToken);
+  const isInfoOrExit = isExitMigrationOrInfoQuery(promptText, targetToken);
+
+  if (isInfoOrExit && !isAdoption) {
     return false;
   }
   return true;
@@ -611,7 +683,18 @@ export function checkPromptViolation(
           descLower.includes(key) ||
           idSubject === key;
 
-        if (matchesKey) {
+        // Si la regla veta explícitamente esta familia O si exige stdlib nativa y es una familia de frameworks/ORMs
+        // (Cross-ecosystem ban: ej. exigir stdlib en Go veta Express/Flask; exigir stdlib en TS/Python veta Gin/Chi)
+        const appliesToFamily =
+          matchesKey ||
+          (mentionsStdlib && (
+            (never.id.toLowerCase().includes('gin') || descLower.includes('net/http') || descLower.includes('router') || descLower.includes('framework')) && fam.family.includes('http-frameworks') ||
+            (never.id.toLowerCase().includes('express') || descLower.includes('node:http')) && fam.family.includes('http-frameworks') ||
+            (never.id.toLowerCase().includes('flask') || descLower.includes('http.server')) && fam.family.includes('http-frameworks') ||
+            (never.id.toLowerCase().includes('gorm') || never.id.toLowerCase().includes('prisma') || never.id.toLowerCase().includes('sqlalchemy') || descLower.includes('orm') || descLower.includes('sql')) && fam.family.includes('orms')
+          ));
+
+        if (appliesToFamily) {
           // Si la regla exige stdlib, o veta la categoría ("otros orm", "otros frameworks", etc.)
           if (
             mentionsStdlib ||
@@ -621,12 +704,12 @@ export function checkPromptViolation(
             descLower.includes('cualquier orm')
           ) {
             for (const member of fam.members) {
-              if (member === key) continue; // ya evaluado en 3.1
+              if (matchesKey && member === key) continue; // ya evaluado en 3.1
 
               // Exclusiones de contexto para falsos positivos de palabras comunes:
               // a) "echo": Si se usa como sustantivo o verbo en inglés ("hacer echo", "echo payload", "echo endpoint")
               if (member === 'echo') {
-                const isEchoFramework = /\b(?:con\s+echo|usando\s+echo|framework\s+echo|router\s+echo|labstack\/echo|echo\s+(?:framework|router))\b/i.test(lowerPrompt);
+                const isEchoFramework = /\b(?:(?:con|usando|framework|router|labstack\/echo|migr(?:ar?|[aá]|e|emos|en)|cambi(?:ar?|[aá]|ate|[eé]|emos|en)|pas(?:ar?|[aá]|ame|[eé]|emos|en))\s+(?:a\s+)?echo|echo\s+(?:framework|router))\b/i.test(lowerPrompt);
                 if (!isEchoFramework) continue;
               }
 
@@ -653,28 +736,29 @@ export function checkPromptViolation(
   for (const inv of playbook.invariants) {
     const desc = inv.description.toLowerCase();
     if (inv.surface) {
+      const prep = `(?:(?:en|adentro\\s+de|dentro\\s+de)(?:\\s+(?:el|la))?|(?:adentro|dentro)\\s+del)`;
       const forbiddenPathPhrases: Array<{ regex: RegExp; forbiddenInDesc: string }> = [
-        { regex: /\b(?:en\s+main\.go|en\s+la\s+ra[ií]z)\b/i, forbiddenInDesc: 'en main.go' },
-        { regex: /\b(?:en\s+main\.py)\b/i, forbiddenInDesc: 'en main.py' },
-        { regex: /\b(?:en\s+src\/index\.ts|en\s+index\.ts)\b/i, forbiddenInDesc: 'en src/index.ts' },
-        { regex: /\b(?:en\s+pkg[\w\/-]*)\b/i, forbiddenInDesc: 'ni en pkg/' },
-        { regex: /\b(?:en\s+cmd[\w\/-]*)\b/i, forbiddenInDesc: 'ni en cmd/' },
-        { regex: /\b(?:en\s+src\/routes[\w\/-]*)\b/i, forbiddenInDesc: 'src/routes' },
-        { regex: /\b(?:en\s+src\/controllers[\w\/-]*)\b/i, forbiddenInDesc: 'src/controllers' },
-        { regex: /\b(?:en\s+app\/views[\w\/-]*)\b/i, forbiddenInDesc: 'app/views' },
-        { regex: /\b(?:en\s+app\/api[\w\/-]*)\b/i, forbiddenInDesc: 'app/api' },
-        { regex: /\b(?:en\s+internal\/core[\w\/-]*)\b/i, forbiddenInDesc: 'internal/core' },
+        { regex: new RegExp(`\\b${prep}\\s+(?:main\\.go|la\\s+ra[ií]z)\\b`, 'i'), forbiddenInDesc: 'en main.go' },
+        { regex: new RegExp(`\\b${prep}\\s+main\\.py\\b`, 'i'), forbiddenInDesc: 'en main.py' },
+        { regex: new RegExp(`\\b${prep}\\s+(?:src\\/index\\.ts|index\\.ts)\\b`, 'i'), forbiddenInDesc: 'en src/index.ts' },
+        { regex: new RegExp(`\\b${prep}\\s+pkg[\\w\\/-]*\\b`, 'i'), forbiddenInDesc: 'ni en pkg/' },
+        { regex: new RegExp(`\\b${prep}\\s+cmd[\\w\\/-]*\\b`, 'i'), forbiddenInDesc: 'ni en cmd/' },
+        { regex: new RegExp(`\\b${prep}\\s+src\\/routes[\\w\\/-]*\\b`, 'i'), forbiddenInDesc: 'src/routes' },
+        { regex: new RegExp(`\\b${prep}\\s+src\\/controllers[\\w\\/-]*\\b`, 'i'), forbiddenInDesc: 'src/controllers' },
+        { regex: new RegExp(`\\b${prep}\\s+app\\/views[\\w\\/-]*\\b`, 'i'), forbiddenInDesc: 'app/views' },
+        { regex: new RegExp(`\\b${prep}\\s+app\\/api[\\w\\/-]*\\b`, 'i'), forbiddenInDesc: 'app/api' },
+        { regex: new RegExp(`\\b${prep}\\s+internal\\/core[\\w\\/-]*\\b`, 'i'), forbiddenInDesc: 'internal/core' },
       ];
 
       for (const phrase of forbiddenPathPhrases) {
         if (phrase.regex.test(lowerPrompt) && desc.includes(phrase.forbiddenInDesc)) {
-          // Si el prompt es una consulta exploratoria o teórica (preguntas de por qué, explicame)
+          // Si el prompt es una consulta exploratoria o teórica (preguntas de por qué, explicame, comparación o consulta sin orden)
           // y no contiene una orden imperativa de creación/escritura en esa ruta, no es violación
           const isQueryAboutPath =
-            /(?:^|[^\wáéíóúñ])(?:por\s+qu[eé]|why|qu[eé]\s+es|what\s+is|explicame|explain|diferencia|pros\s+y\s+contras)(?=[^\wáéíóúñ]|$)/i.test(
+            /(?:^|[^\wáéíóúñ])(?:por\s+qu[eé]|why|qu[eé]\s+es|what\s+is|explicame|explain|diferencia|pros\s+y\s+contras|conviene|es\s+mejor|qu[eé]\s+opin[aá]s)(?=[^\wáéíóúñ]|$)/i.test(
               lowerPrompt
             );
-          const hasPathImplementation = /(?<!\b(?:no|sin|evitar?|evita)\s+)\b(?:cre[aá]|crear?|escrib[ií]|escribir?|arm[aá]|armar?|hac[eé]|hacer?|pon[eé]|poner?|met[eé]|meter?|coloc[aá]|colocar?|build|create|write|put)\s+.*?\b(?:en\s+main|en\s+pkg|en\s+cmd|en\s+src\/routes|en\s+src\/controllers|en\s+la\s+ra[ií]z)\b/i.test(lowerPrompt);
+          const hasPathImplementation = new RegExp(`(?<!\\b(?:no|sin|evitar?|evita|conviene(?:\\s+\\w+)?)\\s+)\\b(?:cre[aá]|crear?|escrib[ií]|escribir?|arm[aá]|armar?|hac[eé]|hacer?|pon[eé]|poner?|met[eé]|meter?|coloc[aá]|colocar?|build|create|write|put)\\s+.*?\\b${prep}\\s+(?:main|pkg|cmd|src\\/routes|src\\/controllers|la\\s+ra[ií]z)\\b`, 'i').test(lowerPrompt);
           if (isQueryAboutPath && !hasPathImplementation) {
             continue;
           }
@@ -695,6 +779,37 @@ export function checkPromptViolation(
           return {
             rule: inv,
             reason: `El prompt solicita modelar con "class", prohibido por la regla de programación funcional [${inv.id.toUpperCase()}].`,
+            source: 'invariant',
+            kind: 'surface_conflict',
+          };
+        }
+      }
+
+      // 4.3 Desviación hacia rutas o ecosistemas ajenos cuando la invariante es exclusiva
+      // (ej. pedir "Health en TypeScript" o "Health en src/transport/http" en proyecto con playbook Go exclusivo en internal/ports/httpserver/)
+      const foreignEcoPath = /\b(?:(?:en|adentro\s+de|dentro\s+de)\s+(?:src\/transport|src\/routes|src\/controllers|app\/adapters|app\/views))\b/i;
+      if (foreignEcoPath.test(lowerPrompt) && !inv.surface.includes('src/') && !inv.surface.includes('app/')) {
+        return {
+          rule: inv,
+          reason: `El prompt solicita colocar código fuera de la superficie autorizada "${inv.surface}".`,
+          source: 'invariant',
+          kind: 'surface_conflict',
+        };
+      }
+
+      // Desviación explícita de lenguaje respecto al playbook activo (ej: "Health en TypeScript, no en Go" con playbook Go)
+      if (playbook.language && playbook.language !== 'generic') {
+        const otherLangs = ['typescript', 'python', 'go', 'rust']
+          .filter((l) => l !== playbook.language.toLowerCase());
+        const otherLangsPattern = otherLangs.join('|');
+        const langDeviation = new RegExp(
+          `\\b(?:(?:hacelo|armalo|escribilo|crealo|hacer|armar|escribir|crear)\\s+en\\s+(${otherLangsPattern})|en\\s+(${otherLangsPattern}),?\\s+no\\s+en\\s+${playbook.language.toLowerCase()})\\b`,
+          'i'
+        );
+        if (langDeviation.test(lowerPrompt)) {
+          return {
+            rule: inv,
+            reason: `El prompt solicita cambiar el lenguaje fuera de la arquitectura oficial (${playbook.language.toUpperCase()}) en "${inv.surface}".`,
             source: 'invariant',
             kind: 'surface_conflict',
           };
@@ -767,10 +882,23 @@ export function checkPathViolation(
     );
     if (isAllowed) continue;
 
-    // Extraer menciones explícitas de rutas vetadas en la descripción (ej: "no crear en main.go ni en pkg/ ni en cmd/")
+    // Extraer menciones explícitas de rutas vetadas en la descripción (ej: "no crear en main.go ni en pkg/ ni en cmd/", "no en internal/core/")
     const forbiddenMentions = Array.from(
-      desc.matchAll(/(?:no\s+crear|no\s+escribir|no\s+poner|ni\s+en|no\s+en)\s+([a-zA-Z0-9_\-\.\/]+)/gi)
+      desc.matchAll(/(?:no\s+crear(?:\s+en)?|no\s+escribir(?:\s+en)?|no\s+poner(?:\s+en)?|ni\s+en|no\s+en)\s+([a-zA-Z0-9_\-\.\/]+)/gi)
     ).map((m) => m[1].toLowerCase().replace(/^\.?\//, '').replace(/\/$/, ''));
+
+    // También extraer menciones en paréntesis como "(no en main.go, cmd/, internal/core/)" o "no en internal/core"
+    const parenMatches = Array.from(
+      desc.matchAll(/\((?:[^)]*?\bno\s+en\s+)([^)]+)\)/gi)
+    );
+    for (const pm of parenMatches) {
+      const parts = pm[1].split(/[,;]|\bni\s+en\b|\bo\s+en\b|\by\s+en\b/).map((s) => s.trim().toLowerCase().replace(/^\.?\//, '').replace(/\/$/, ''));
+      for (const part of parts) {
+        if (part && !forbiddenMentions.includes(part)) {
+          forbiddenMentions.push(part);
+        }
+      }
+    }
 
     const isExplicitlyForbiddenHere = forbiddenMentions.some((f) => {
       const cleanF = f.replace(/\/$/, '');
@@ -797,17 +925,27 @@ export function checkPathViolation(
       continue;
     }
 
-    // 4. Si no está en otra capa declarada, verificar si el archivo coincide con el scope dinámico de la regla
+    // 4. Si no está en otra capa declarada, evaluar si coincide con el scope de la regla
     const scopeTokens = `${inv.surface} ${inv.title} ${desc.split('.')[0]}`
       .toLowerCase()
       .split(/[\/,\s_.-]+/)
       .filter((t) => t.length >= 3 && !['internal', 'src', 'app', 'pkg', 'lib', 'los', 'las', 'del', 'para', 'con', 'una', 'uno'].includes(t));
 
     const isHttpTransportRule = scopeTokens.some((t) => t.includes('handler') || t.includes('port') || t.includes('http') || t.includes('transport'));
+    const isDomainRule = scopeTokens.some((t) => t.includes('domain') || t.includes('dominio') || t.includes('model') || t.includes('modelo'));
+
+    // Para reglas exclusivas de dominio/lógica ("el dominio vive exclusivamente en...", "funciones en src/domain"):
+    // Cualquier archivo de código fuera de las superficies declaradas y fuera de archivos raíz de bootstrap/config
+    // debe ser bloqueado por exclusividad.
+    const isDomainExclusive = isDomainRule || desc.includes('el dominio vive') || desc.includes('dominio en');
+
+    const isRootOrConfig = !normalized.includes('/') ||
+      /^(?:test|tests|spec|specs|scripts|config|infra|docs|migrations)\//i.test(normalized);
 
     const matchesScope =
       scopeTokens.some((t) => normalized.toLowerCase().includes(t)) ||
       (isHttpTransportRule && /(?:handler|controller|route|endpoint|http|server|transport|api)/i.test(normalized)) ||
+      (isDomainExclusive && !isRootOrConfig) ||
       !normalized.includes('/');
 
     if (matchesScope) {
@@ -864,18 +1002,27 @@ export function checkAskTrigger(
     // 1. Anti-trigger evaluation
     if (antiTrigger) {
       // Health checks
+      // En prompts compuestos (ej: "GET /health y POST /login público", "GET /health y POST /checkout público"),
+      // si existe una cláusula que activa un trigger público u otra acción explícita, no suprimir globalmente por health.
       const isHealth = /\b(?:health|healthz|salud|ping)\b/i.test(lowerPrompt);
+      const hasDistinctActionableTrigger =
+        /\b(?:post|put|delete|patch|login|signup|register|registro|checkout|p[uú]blic[ao]s?)\b/i.test(lowerPrompt) &&
+        !/^(?:get\s+)?(?:\/)?(?:health|healthz|ping|salud)$/i.test(lowerPrompt.trim());
       if (isHealth && (antiTrigger.includes('health') || antiTrigger.includes('health checks'))) {
-        continue;
+        if (!hasDistinctActionableTrigger) {
+          continue;
+        }
       }
 
       // Rutas autenticadas, tokens, bearer, me
-      // Excluir endpoints de emisión de credenciales (login, signup, register, oauth, token) para no suprimir falsamente los asks públicos
-      const isCredentialIssuing = /\b(?:login|signup|register|registro|iniciar\s+sesi[oó]n|oauth|token)\b/i.test(lowerPrompt);
-      const isAuth =
-        !isCredentialIssuing &&
-        /\b(?:autenticad[oa]s?|bearer|jwt|token|auth|privad[oa]s?|intern[ao]s?|\/me)\b/i.test(lowerPrompt);
-      if (isAuth && (antiTrigger.includes('autenticad') || antiTrigger.includes('internas') || antiTrigger.includes('authenticated'))) {
+      // Si la ruta explícitamente se pide autenticada/privada/con bearer (incluso si es un endpoint con 'login' o 'token'),
+      // el anti-trigger de rutas autenticadas debe respetarse.
+      const isExplicitlyAuth = /\b(?:autenticad[oa]s?|bearer|jwt|privad[oa]s?|intern[ao]s?|\/me)\b/i.test(lowerPrompt);
+      const isPurePublicCredentialCreation =
+        /\b(?:p[uú]blic[ao]|sin\s+auth|sin\s+autenticaci[oó]n)\b/i.test(lowerPrompt) ||
+        (!isExplicitlyAuth && /\b(?:login|signup|register|registro)\b/i.test(lowerPrompt));
+
+      if (isExplicitlyAuth && !isPurePublicCredentialCreation && (antiTrigger.includes('autenticad') || antiTrigger.includes('internas') || antiTrigger.includes('authenticated'))) {
         continue;
       }
 

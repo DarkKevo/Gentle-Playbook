@@ -1120,6 +1120,19 @@ export default function (pi: ExtensionAPI) {
         if (activePb) playbooksToCheck.push(activePb);
       }
 
+      // Soporte para monorepos / stacks combinados: evaluar playbooks instalados
+      if (typeof (storage as any).listLanguages === 'function') {
+        const allLangs = await (storage as any).listLanguages();
+        for (const lang of allLangs) {
+          if (lang !== AGENTS_PREFERENCES_ID && lang !== detectedLang) {
+            const extraPb = await storage.getPlaybook(lang);
+            if (extraPb && !playbooksToCheck.some((p) => p.language === extraPb.language)) {
+              playbooksToCheck.push(extraPb);
+            }
+          }
+        }
+      }
+
       const agentPrefs = await storage.getAgentPreferences();
       if (agentPrefs) playbooksToCheck.push(agentPrefs);
 
@@ -1249,6 +1262,19 @@ export default function (pi: ExtensionAPI) {
       if (detectedLang && detectedLang !== 'generic') {
         const activePb = await storage.getPlaybook(detectedLang);
         if (activePb) playbooksToCheck.push(activePb);
+      }
+
+      // En monorepos, verificar si el archivo por su extensión/ruta corresponde a otro playbook instalado
+      if (typeof (storage as any).listLanguages === 'function') {
+        const allLangsTool = await (storage as any).listLanguages();
+        for (const lang of allLangsTool) {
+          if (lang !== AGENTS_PREFERENCES_ID && lang !== detectedLang) {
+            const extraPb = await storage.getPlaybook(lang);
+            if (extraPb && !playbooksToCheck.some((p) => p.language === extraPb.language)) {
+              playbooksToCheck.push(extraPb);
+            }
+          }
+        }
       }
 
       const agentPrefs = await storage.getAgentPreferences();

@@ -18,39 +18,46 @@ Cuando desarrollás software con agentes de IA, cada nuevo repositorio o proyect
 
 ## 🏛️ Modelo Mental & Taxonomía de Reglas
 
-`gentle-playbook` divide las preferencias arquitectónicas en dos categorías estrictas:
+`gentle-playbook` divide las preferencias arquitectónicas y de gobernanza en tres categorías estrictas:
 
 ```
                     ┌─────────────────────────┐
                     │     GENTLE PLAYBOOK     │
                     └────────────┬────────────┘
                                  │
-         ┌───────────────────────┴───────────────────────┐
-         ▼                                               ▼
-┌─────────────────────────┐             ┌─────────────────────────┐
-│       INVARIANTS        │             │       ASK CATALOG       │
-│   (Normativas Duras)    │             │ (Patrones Condicionales)│
-├─────────────────────────┤             ├─────────────────────────┤
-│ • No negociables        │             │ • Opcionales/Recetas    │
-│ • Aplicadas en silencio │             │ • Requieren Trigger     │
-│ • Cero preguntas        │             │ • Poseen Anti-Trigger   │
-│ • Ej: Bytes nulos, DTOs │             │ • Ej: Cache, Rate-Limit │
-└─────────────────────────┘             └─────────────────────────┘
+         ┌───────────────────────┼───────────────────────┐
+         ▼                       ▼                       ▼
+┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│   INVARIANTS    │     │   ASK CATALOG   │     │   NEVER RULES   │
+│(Normativas Duras│     │    (Patrones    │     │ (Prohibiciones  │
+│  y Estructura)  │     │  Condicionales) │     │   Terminantes)  │
+├─────────────────┤     ├─────────────────┤     ├─────────────────┤
+│• Directa/silente│     │• Opcionales     │     │• Veto de kits   │
+│  en conformidad │     │• Requieren      │     │  u ORMs         │
+│• Confirmación o │     │  Trigger en     │     │• Prohibición    │
+│  redirección    │     │  el contenido   │     │  categórica y   │
+│  ante conflicto │     │• Anti-Trigger   │     │  cross-eco si   │
+│• Ej: Bytes nulos│     │• Default seguro │     │  exige stdlib   │
+└─────────────────┘     └─────────────────┘     └─────────────────┘
 ```
 
 ### 1. Invariants (Normativa Global - No negociable)
-* Se aplican **incondicionalmente y en silencio**.
-* El agente jamás te pregunta si querés usarlas; las implementa por defecto al crear código en ese lenguaje.
+* Se aplican **directamente y en silencio cuando no hay conflicto**.
+* Ante un conflicto de topología o superficie, el pre-vuelo interactivo solicita confirmación/redirección en TUI, o aplica redirección canónica visible en modo desatendido.
 * *Ejemplo en Go:* Todo endpoint HTTP entrante pasa por el middleware de sanitización de bytes nulos (`\x00` y `%00`) para proteger PostgreSQL (SQLSTATE 22021). Todo DTO string obligatorio lleva el tag `validate:"notblank"`.
 
 ### 2. Ask Catalog (Patrones Condicionales & Recetas)
 * Son bloques de arquitectura opcionales pero estandarizados.
-* **Coordenadas Deterministas de Activación:**
-  * **Surface:** Capa o directorio donde aplica (ej: `internal/adapters/handlers/`).
-  * **Trigger:** Condición técnica exacta que activa la consulta (ej: creación de endpoints públicos sin auth como `/login` o `/register`).
-  * **Anti-Trigger:** Condición de veto donde está **terminantemente prohibido preguntar** (ej: rutas privadas con JWT, tareas batch o gRPC interno).
+* **Coordenadas de Activación:**
+  * **Surface:** Superficie donde aplica la regla.
+  * **Trigger:** Condición técnica en el texto del prompt que activa la consulta (ej: creación de endpoints públicos como `/login` o `/register`).
+  * **Anti-Trigger:** Condición de veto donde **no corresponde preguntar** (ej: rutas privadas autenticadas o `/health` puro).
   * **Pregunta Canónica:** La formulación exacta para el usuario.
-  * **Receta:** Si el usuario acepta, el agente utiliza el snippet canónico registrado sin inventar librerías de terceros.
+  * **Acción / Receta:** Si el usuario acepta, se instruye al modelo a incluir el extra aprobado junto con la implementación base. Si declina, se instruye a aplicar la acción por defecto sin omitir el feature base.
+
+### 3. Never Rules (Prohibiciones Terminantes)
+* Reglas de veto tecnológico y de dependencias (ej: prohibir Gin, Express, Flask, GORM o lodash).
+* Si la regla exige la biblioteca estándar (`stdlib`), cualquier alternativa de terceros o de familias cross-ecosistema es interceptada categóricamente.
 
 ---
 
@@ -100,21 +107,24 @@ cd ~/Proyectos/Gentle-playbook
 A partir de la versión v0.6.0, `gentle-playbook` desacopla el almacenamiento del system prompt mediante un modelo **On-Demand asistido por Tool**:
 
 1. **Notificación de inicio (`session_start`):** Inspecciona los archivos raíz (`go.mod` ➔ Go, `package.json` ➔ TypeScript, `Cargo.toml` ➔ Rust). Si existe un playbook guardado para ese lenguaje o preferencias de agente, te notifica que están disponibles.
-2. **Puntero Liviano en System Prompt (`before_agent_start`):** En lugar de volcar miles de tokens de markdown en cada turno, Pi inyecta una directiva ligera en `systemPromptOptions.sections.playbook_guidance` (~30 tokens) que orienta al modelo a consultar obligatoriamente la herramienta `playbook_consult` antes de generar, estructurar o modificar código.
+2. **Puntero Liviano en System Prompt (`before_agent_start`):** En lugar de volcar miles de tokens de markdown en cada turno, Pi inyecta una directiva ligera en `systemPromptOptions.sections.playbook_guidance` (~60 tokens) que orienta al modelo a consultar obligatoriamente la herramienta `playbook_consult` antes de generar, estructurar o modificar código.
 3. **Herramienta Nativa `playbook_consult`:** El modelo invoca la tool bajo demanda con filtrado por lenguaje (`go`, `typescript`, `agents`) o por superficie (`internal/ports`, `tools:write`, `git:push`), recuperando datos pasivos de referencia con total aislamiento de seguridad.
 
 ---
 
-### 2. Gobernanza Semántica, Resolución de Conflictos y Asks Interactivos (Issue #12, #14)
+### 2. Gobernanza Determinística, Resolución de Conflictos y Asks Interactivos (Issue #12, #14, #15, #16)
 Para garantizar que el modelo no desobedezca las reglas cuando el prompt contradice el reglamento o intenta usar tecnologías prohibidas, sin caer en salidas mudas ni canibalizar la entrega de código:
 
-1. **Pre-vuelo Semántico en `input` & Adopción en Pi (`action: 'transform'`):**
-   - Cuando el usuario ingresa un prompt, el motor evalúa semánticamente la intención contra las reglas activas del playbook (`evaluatePromptFull`).
+1. **Pre-vuelo Determinístico en `input` & Adopción en Pi:**
+   - Cuando el usuario ingresa un prompt, el motor evalúa determinísticamente por patrones en memoria (<1ms) la intención contra las reglas activas del playbook (`evaluatePromptFull`).
    - El resultado clasifica formalmente la intención con tipado fuerte (`ViolationKind: checkpoint_bypass | playbook_bypass | surface_conflict | prohibited_dependency | agent_governance_violation`).
-   - Cuando se transforma el prompt con directivas de redirección o resoluciones de Asks, la extensión retorna formalmente `{ action: 'transform', text: event.text }`, cumpliendo el contrato del runner de Pi para asegurar que las directivas se apliquen de forma efectiva.
+   - Salidas del hook `input`:
+     - `{ action: 'transform', text: event.text }`: Cuando el texto es modificado con directivas de redirección canónica o resolución de Asks, garantizando adopción nativa en Pi.
+     - `{ action: 'handled' }`: Cuando la operación es cancelada por el usuario o bloqueada ante un bypass en modo desatendido.
+     - `{ action: 'continue' }`: Cuando el prompt no presenta conflictos, ante mensajes internos de la extensión, prompts vacíos, o excepciones atrapadas en el `catch`.
 
 2. **Resolución de Conflictos sin Abortos Mudos (Anti-Silent Exit):**
-   - **En modo interactivo (TUI):** Si el prompt entra en conflicto con una regla de topología o dependencia vetada, salta un selector estructurado:
+   - **En modo interactivo (TUI):** Si el prompt entra en conflicto con una regla de topología o dependencia vetada, salta un selector estructurado o confirmación:
      1. `🛡️ Redirigir a la arquitectura canónica [Recomendado]`: Implementa el feature en la superficie permitida del playbook sin tecnologías prohibidas.
      2. `⚠️ Permitir excepción por esta única vez`: Autoriza conscientemente la desviación.
      3. `❌ Cancelar la operación`: Detiene la acción protegiendo las normas.
@@ -194,9 +204,9 @@ A diferencia de herramientas que buscan palabras fijas o linters de juguete, `/p
    - Si `codegraph` está disponible en tu sistema (`CODEGRAPH_BIN`), el agente indexa el repositorio completo (`codegraph ensureIndex`) y extrae el mapa integral de símbolos, interfaces, handlers, middlewares y tipos con sus números de línea exactos.
    - Si CodeGraph no está presente, inspecciona el árbol de archivos y manifiestos de dependencias (`package.json`, `go.mod`, `Cargo.toml`, etc.) de forma nativa.
 2. **La Regla de Oro: "Elección vs Imposición":** El agente evalúa si existía una alternativa razonable en ese stack y qué eligió el autor consistentemente. Descarta lo obvio impuesto por el framework y captura la verdadera huella digital arquitectónica.
-3. **Verificación Cuantitativa (Evidencia Contada):** No generaliza por intuición. Cuenta casos reales (`cumple / total`) y busca activamente contraejemplos:
-   - **≥ 90% y ≥ 5 casos:** Se registra como **Normativa Invariante (`INVARIANT`)**.
-   - **60-89% o condicional a contexto:** Se registra como **Punto de Control / Receta (`ASK_RULE`)**.
+3. **Verificación Cuantitativa (Criterios instruidos al agente extractor):** No generaliza por intuición. Se instruye al agente a buscar evidencia empírica (`cumple / total`) y contraejemplos:
+   - **≥ 90% y ≥ 5 casos:** Se propone registrar como **Normativa Invariante (`INVARIANT`)**.
+   - **60-89% o condicional a contexto:** Se propone registrar como **Punto de Control / Receta (`ASK_RULE`)**.
    - **< 60% o < 3 casos:** Se descarta como ruido.
 4. **Ausencias Deliberadas (`Nunca`):** Identifica lo que el proyecto evita sistemáticamente cuando era una opción disponible (ej: *"No usar ORM; queries en SQL explícito"*, *"No usar globals"*, *"Sin `any`"*).
 5. **Arbitraje Semántico con IA (Sin comparaciones fijas por ID):**
@@ -235,17 +245,17 @@ Administrá y depurá tus normas directamente desde el TUI de Pi con asistentes 
 
 ---
 
-## ⌨️ Slash Commands en Pi (TUI-First)
+## ⌨️ Subcomandos de `/playbook` en Pi (TUI-First)
 
-Toda la funcionalidad de `gentle-playbook` está integrada de forma nativa en Pi, sin necesidad de binarios de consola ni cambios de ventana:
+Toda la funcionalidad de `gentle-playbook` está integrada de forma nativa en Pi mediante el comando `/playbook` (o alias `/gentle-playbook`) y sus subcomandos:
 
-| Comando | Alias | Descripción |
+| Subcomando | Alias directo | Descripción y Flags |
 |---|---|---|
-| `/playbook` | `/gentle-playbook` | Menú interactivo: auditar playbooks guardados, inventario de reglas y estado. |
-| `/playbook show <lang\|agents>` | `/gentle-playbook show` | Despliega en el chat las normas, checkpoints y prohibiciones del lenguaje (con `--full` incluye snippets de código). |
-| `/playbook extract [path]` | `/gentle-playbook extract` | Lanza el **Agente de Esencia** con CodeGraph, diff semántico de IA y arbitraje 1 a 1 en el TUI. |
+| `/playbook` [list] | `/gentle-playbook` | Menú interactivo: auditar playbooks guardados, inventario de reglas y estado. |
+| `/playbook show <lang\|agents>` | `/gentle-playbook show` | Despliega en el chat las normas, checkpoints y prohibiciones del lenguaje (flag `--full` incluye snippets de código). |
+| `/playbook extract [path]` | `/gentle-playbook extract` | Lanza el **Agente de Esencia** con CodeGraph, diff semántico de IA y arbitraje 1 a 1 en el TUI (soporta flag `--lang <lenguaje>`). |
 | `/playbook add [lang\|agents]` | `/gentle-playbook-add` | Flujo interactivo guiado para agregar una nueva regla sintetizada con LLM y validación anti-inyección. |
-| `/playbook delete [lang\|agents]` | `/gentle-playbook delete` | Menú interactivo para eliminar reglas individuales quirúrgicamente o borrar playbooks completos. |
+| `/playbook delete [lang\|agents]` | `/gentle-playbook delete` | Menú interactivo para eliminar reglas individuales quirúrgicamente (soporta flag `--rule <id>`) o borrar playbooks completos. |
 
 ---
 
@@ -331,9 +341,9 @@ Los playbooks y preferencias operan bajo un modelo de **datos pasivos de referen
 1. **Desacople del System Prompt (`playbook_consult` Tool):**
    A partir de la versión v0.6.0, el contenido completo de los playbooks no se inyecta en el prompt del sistema. Se expone como una herramienta TypeBox (`playbook_consult`) consultada por el modelo bajo demanda, eliminando la sobrecarga innecesaria de tokens y garantizando aislamiento estricto.
 2. **Defensa contra Inyecciones & Turn-Hijacking:**
-   Toda regla (manual o extraída) pasa por `validateRuleContent` y un catálogo de 17 categorías de detección de inyecciones de prompt (ChatML, delimitadores de rol, directivas de olvido en 5 idiomas y escape de entidades XML).
-3. **Gobernanza Semántica en Tiempo Real:**
-   El Agente evalúa en pre-vuelo (`input`) si el prompt busca eludir normas, requiriendo confirmación interactiva en TUI. En `tool_call`, se neutraliza cualquier intento de escritura fuera de superficies canónicas o mediante saltos de directorio (*path traversal*).
+   Toda regla (manual o extraída) pasa por `validateRuleContent` y un catálogo de 16 categorías de detección de inyecciones de prompt (`INJECTION_PATTERNS`: ChatML, delimitadores de rol, directivas de olvido en varios idiomas y escape de entidades XML).
+3. **Gobernanza Determinística en Tiempo Real & Fail-Closed:**
+   El motor evalúa en pre-vuelo (`input`) si el prompt busca eludir normas, requiriendo confirmación interactiva en TUI. En `tool_call`, se neutraliza cualquier intento de escritura fuera de superficies canónicas o mediante saltos de directorio (*path traversal*), aplicando política **Fail-Closed** en el hook de herramientas ante cualquier excepción imprevista.
 4. **Consentimiento Humano Obligatorio:**
    Ningún comando persiste reglas en disco de forma automática sin confirmación previa del usuario (o flag `--yes` explícito en entornos desatendidos).
 

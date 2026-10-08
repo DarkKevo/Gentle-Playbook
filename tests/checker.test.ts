@@ -1062,5 +1062,384 @@ Sin embargo, viola la regla arquitectónica:
       expect(checkPromptViolation('crear el handler en main.go', samplePlaybook)).not.toBeNull();
       expect(checkPromptViolation('¿Por qué no va en main? Bueno, hacé el handler en main.go', samplePlaybook)).not.toBeNull();
     });
+
+    it('should resolve Issue #15 false positives (fp-01 through fp-08)', () => {
+      // fp-01: Explicit negation of prohibited tech
+      expect(checkPromptViolation('no uses Gin, usá net/http', samplePlaybook)).toBeNull();
+      // fp-02: Explicit negation of GORM
+      expect(checkPromptViolation('evitá GORM y usá SQL puro', samplePlaybook)).toBeNull();
+      // fp-03: Prepositional negation
+      expect(checkPromptViolation('sin Gin: health con net/http', samplePlaybook)).toBeNull();
+      // fp-04: Dependency audit / inspection query
+      expect(checkPromptViolation('revisá si hay Gin en el go.mod', samplePlaybook)).toBeNull();
+      // fp-05: Exit migration with conjugated colloquial verb
+      expect(checkPromptViolation('sacá Gin del proyecto', samplePlaybook)).toBeNull();
+      // fp-06: Explicit comparison without implementation intent
+      expect(checkPromptViolation('mostrame cómo sería en Gin vs net/http, solo comparar, no implementar', samplePlaybook)).toBeNull();
+      // fp-07: Comparison without explicit "vs"
+      expect(checkPromptViolation('¿Gin es mejor que net/http para este caso?', samplePlaybook)).toBeNull();
+      // fp-08: Genuine inquiry about paths without creation command
+      expect(checkPromptViolation('¿conviene poner el handler en main.go o en ports?', samplePlaybook)).toBeNull();
+    });
+
+    it('should resolve Issue #15 conjugated migrations (mj-01 through mj-03)', () => {
+      // mj-01: cambiate a Echo
+      const m1 = checkPromptViolation('cambiate a Echo', samplePlaybook);
+      expect(m1).not.toBeNull();
+      expect(m1?.kind).toBe('prohibited_dependency');
+
+      // mj-02: cambiá a Echo
+      const m2 = checkPromptViolation('cambiá a Echo', samplePlaybook);
+      expect(m2).not.toBeNull();
+      expect(m2?.kind).toBe('prohibited_dependency');
+
+      // mj-03: migremos a Echo
+      const m3 = checkPromptViolation('migremos a Echo', samplePlaybook);
+      expect(m3).not.toBeNull();
+      expect(m3?.kind).toBe('prohibited_dependency');
+
+      // additional rioplatense forms
+      expect(checkPromptViolation('pasemos a Fiber', samplePlaybook)).not.toBeNull();
+      expect(checkPromptViolation('llevemos el proyecto a Chi', samplePlaybook)).not.toBeNull();
+    });
+
+    it('should resolve Issue #16 surface prepositions "adentro de" / "dentro de" (d03, f04)', () => {
+      const dbPlaybook: Playbook = {
+        language: 'go',
+        version: 1,
+        updatedAt: '2026-10-03',
+        topology: { pattern: 'Hexagonal', directories: [] },
+        invariants: [
+          {
+            id: 'sql-in-postgres-adapter',
+            type: 'invariant',
+            title: 'SQL solo en adapter',
+            surface: 'internal/adapters/postgres',
+            description: 'El SQL vive exclusivamente en internal/adapters/postgres/ (no en main.go, cmd/, internal/core/).',
+          },
+        ],
+        askRules: [],
+        neverRules: [],
+        snippets: [],
+      };
+
+      const fpPlaybook: Playbook = {
+        language: 'typescript',
+        version: 1,
+        updatedAt: '2026-10-03',
+        topology: { pattern: 'Functional', directories: [] },
+        invariants: [
+          {
+            id: 'fp-domain-functions',
+            type: 'invariant',
+            title: 'Dominio en funciones',
+            surface: 'src/domain',
+            description: 'El dominio vive en src/domain (no en src/index.ts, raíz, ni con class).',
+          },
+        ],
+        askRules: [],
+        neverRules: [],
+        snippets: [],
+      };
+
+      // d03: con el SQL adentro de main.go
+      const d03 = checkPromptViolation('Listar usuarios con SQL adentro de main.go', dbPlaybook);
+      expect(d03).not.toBeNull();
+      expect(d03?.kind).toBe('surface_conflict');
+
+      // f04: adentro de src/index.ts
+      const f04 = checkPromptViolation('calcular descuento adentro de src/index.ts', fpPlaybook);
+      expect(f04).not.toBeNull();
+      expect(f04?.kind).toBe('surface_conflict');
+
+      // dentro de pkg/handlers
+      expect(checkPromptViolation('crear el handler dentro de pkg/handlers', samplePlaybook)).not.toBeNull();
+    });
+
+    it('should resolve Issue #15 & #16 cross-ecosystem kit detection on stdlib mandates (x02-x05, x08, x12)', () => {
+      // x03: Health con Flask in Go project (Go HTTP demands stdlib net/http)
+      const x03 = checkPromptViolation('Health con Flask', samplePlaybook);
+      expect(x03).not.toBeNull();
+      expect(x03?.kind).toBe('prohibited_dependency');
+
+      // x04: Health con Express in Go project
+      const x04 = checkPromptViolation('Health con Express', samplePlaybook);
+      expect(x04).not.toBeNull();
+      expect(x04?.kind).toBe('prohibited_dependency');
+
+      // x05: Health en src/transport/http/ in Go project (demanding TS path outside internal/ports/httpserver/)
+      const x05 = checkPromptViolation('Health en src/transport/http/', samplePlaybook);
+      expect(x05).not.toBeNull();
+      expect(x05?.kind).toBe('surface_conflict');
+
+      // x02: Language deviation in Go project
+      const x02 = checkPromptViolation('El health en TypeScript, no en Go', samplePlaybook);
+      expect(x02).not.toBeNull();
+      expect(x02?.kind).toBe('surface_conflict');
+
+      // x08: Health usando Gin in TS project (TS HTTP demands node:http stdlib)
+      const tsPlaybook: Playbook = {
+        language: 'typescript',
+        version: 1,
+        updatedAt: '2026-10-03',
+        topology: { pattern: 'Ports-and-Adapters', directories: [] },
+        invariants: [
+          {
+            id: 'ts-http-transport',
+            type: 'invariant',
+            title: 'Handlers en transport',
+            surface: 'src/transport/http',
+            description: 'Handlers solo en transport (no en src/routes, controllers, index.ts).',
+          },
+        ],
+        askRules: [],
+        neverRules: [
+          {
+            id: 'no-express',
+            type: 'never',
+            title: 'No usar Express',
+            surface: 'dependencies',
+            description: 'No usar Express ni otros frameworks externos; usar node:http de la biblioteca estándar.',
+          },
+        ],
+        snippets: [],
+      };
+
+      const x08 = checkPromptViolation('Health usando Gin', tsPlaybook);
+      expect(x08).not.toBeNull();
+      expect(x08?.kind).toBe('prohibited_dependency');
+
+      // x12: Health usando Gin in Python project (Python HTTP demands http.server stdlib)
+      const pyPlaybook: Playbook = {
+        language: 'python',
+        version: 1,
+        updatedAt: '2026-10-03',
+        topology: { pattern: 'Hexagonal', directories: [] },
+        invariants: [
+          {
+            id: 'py-http-adapters',
+            type: 'invariant',
+            title: 'Handlers en adapters',
+            surface: 'app/adapters/http',
+            description: 'Handlers solo en app/adapters/http (no en main.py, app/views).',
+          },
+        ],
+        askRules: [],
+        neverRules: [
+          {
+            id: 'no-flask',
+            type: 'never',
+            title: 'No usar Flask',
+            surface: 'dependencies',
+            description: 'No usar Flask ni otros frameworks externos; usar http.server de la biblioteca estándar.',
+          },
+        ],
+        snippets: [],
+      };
+
+      const x12 = checkPromptViolation('Health usando Gin', pyPlaybook);
+      expect(x12).not.toBeNull();
+      expect(x12?.kind).toBe('prohibited_dependency');
+    });
+
+    it('should resolve Issue #15 & #16 combined asks with health (x01)', () => {
+      const askPb: Playbook = {
+        language: 'go',
+        version: 1,
+        updatedAt: '2026-10-03',
+        topology: { pattern: 'Hexagonal', directories: [] },
+        invariants: [],
+        askRules: [
+          {
+            id: 'public-rate-limit',
+            type: 'ask',
+            title: 'Rate Limit en endpoints públicos',
+            surface: 'internal/ports/httpserver',
+            trigger: 'Endpoints públicos (POST /login o POST /register)',
+            antiTrigger: 'Health checks o rutas autenticadas',
+            prompt: '¿Deseas incluir rate limit en el login público?',
+            defaultAction: 'Sin rate limit',
+          },
+        ],
+        neverRules: [],
+        snippets: [],
+      };
+
+      // x01: GET /health + POST /login público in a single prompt
+      const match = checkAskTrigger('GET /health y POST /login público', askPb);
+      expect(match).not.toBeNull();
+      expect(match?.rule.id).toBe('public-rate-limit');
+
+      // Pure health check must STILL be suppressed by the anti-trigger
+      expect(checkAskTrigger('GET /health', askPb)).toBeNull();
+    });
+
+    it('should resolve Issue #15 write barrier holes for w-05 and w-08', () => {
+      const dbPlaybook: Playbook = {
+        language: 'go',
+        version: 1,
+        updatedAt: '2026-10-03',
+        topology: { pattern: 'Hexagonal', directories: [] },
+        invariants: [
+          {
+            id: 'sql-in-postgres-adapter',
+            type: 'invariant',
+            title: 'SQL solo en adapter',
+            surface: 'internal/adapters/postgres',
+            description: 'El SQL vive exclusivamente en internal/adapters/postgres/ (no en main.go, cmd/, internal/core/).',
+          },
+        ],
+        askRules: [],
+        neverRules: [],
+        snippets: [],
+      };
+
+      const fpPlaybook: Playbook = {
+        language: 'typescript',
+        version: 1,
+        updatedAt: '2026-10-03',
+        topology: { pattern: 'Functional', directories: [] },
+        invariants: [
+          {
+            id: 'fp-domain-functions',
+            type: 'invariant',
+            title: 'Dominio en funciones',
+            surface: 'src/domain',
+            description: 'El dominio vive exclusivamente en src/domain (no en src/index.ts, raíz, ni con class).',
+          },
+        ],
+        askRules: [],
+        neverRules: [],
+        snippets: [],
+      };
+
+      // w-05: internal/core/user.go must be blocked when internal/core/ is forbidden in the rule description
+      const w05 = checkPathViolation('internal/core/user.go', dbPlaybook);
+      expect(w05).not.toBeNull();
+      expect(w05?.rule.id).toBe('sql-in-postgres-adapter');
+
+      // w-08: src/utils/cart.ts must be blocked when domain model/services are exclusive to src/domain/
+      const w08 = checkPathViolation('src/utils/cart.ts', fpPlaybook);
+      expect(w08).not.toBeNull();
+      expect(w08?.rule.id).toBe('fp-domain-functions');
+
+      // But legitimate canonical files must pass
+      expect(checkPathViolation('internal/adapters/postgres/user.go', dbPlaybook)).toBeNull();
+      expect(checkPathViolation('src/domain/cart.ts', fpPlaybook)).toBeNull();
+    });
+
+    it('should robustly handle natural language negations and audit inquiries without false positives', () => {
+      // Natural and colloquial negations
+      expect(checkPromptViolation('sin usar Gin, hacelo con net/http', samplePlaybook)).toBeNull();
+      expect(checkPromptViolation('no quiero Gin, usá net/http', samplePlaybook)).toBeNull();
+      expect(checkPromptViolation('nada de Gin, puro net/http', samplePlaybook)).toBeNull();
+      expect(checkPromptViolation('cero Gin, vamos con net/http', samplePlaybook)).toBeNull();
+      expect(checkPromptViolation('descartá Gin y usá la biblioteca estándar', samplePlaybook)).toBeNull();
+      expect(checkPromptViolation('rechazá Gin en este proyecto', samplePlaybook)).toBeNull();
+
+      // Conversational dependency inspections
+      expect(checkPromptViolation('chequeá si está GORM en el proyecto', samplePlaybook)).toBeNull();
+      expect(checkPromptViolation('fijate si usamos Gin', samplePlaybook)).toBeNull();
+      expect(checkPromptViolation('¿tenemos Gin instalado?', samplePlaybook)).toBeNull();
+      expect(checkPromptViolation('revisemos si hay Gin en el proyecto', samplePlaybook)).toBeNull();
+
+      // Conjugated exit migrations
+      expect(checkPromptViolation('migremos de Gin a net/http', samplePlaybook)).toBeNull();
+      expect(checkPromptViolation('pasemos de Gin a net/http', samplePlaybook)).toBeNull();
+      expect(checkPromptViolation('reemplacemos Gin por net/http', samplePlaybook)).toBeNull();
+      expect(checkPromptViolation('borrá Gin del proyecto', samplePlaybook)).toBeNull();
+      expect(checkPromptViolation('limpiá Gin del go.mod', samplePlaybook)).toBeNull();
+    });
+
+    it('should robustly handle Spanish contractions and articles in path prepositions', () => {
+      const dbPlaybook: Playbook = {
+        language: 'go',
+        version: 1,
+        updatedAt: '2026-10-03',
+        topology: { pattern: 'Hexagonal', directories: [] },
+        invariants: [
+          {
+            id: 'sql-in-postgres-adapter',
+            type: 'invariant',
+            title: 'SQL solo en adapter',
+            surface: 'internal/adapters/postgres',
+            description: 'El SQL vive exclusivamente en internal/adapters/postgres/ (no en main.go, cmd/, internal/core/).',
+          },
+        ],
+        askRules: [],
+        neverRules: [],
+        snippets: [],
+      };
+
+      // Contractions and articles: "en el", "adentro del", "dentro del"
+      expect(checkPromptViolation('Listar usuarios con SQL adentro del main.go', dbPlaybook)).not.toBeNull();
+      expect(checkPromptViolation('Listar usuarios con SQL dentro del main.go', dbPlaybook)).not.toBeNull();
+      expect(checkPromptViolation('Listar usuarios con SQL en el main.go', dbPlaybook)).not.toBeNull();
+      expect(checkPromptViolation('handlers adentro del pkg/handlers', samplePlaybook)).not.toBeNull();
+      expect(checkPromptViolation('handlers en el pkg/handlers', samplePlaybook)).not.toBeNull();
+    });
+
+    it('should enforce domain exclusive write barriers without entity name overfitting', () => {
+      const fpPlaybook: Playbook = {
+        language: 'typescript',
+        version: 1,
+        updatedAt: '2026-10-03',
+        topology: { pattern: 'Functional', directories: [] },
+        invariants: [
+          {
+            id: 'fp-domain-functions',
+            type: 'invariant',
+            title: 'Dominio en funciones',
+            surface: 'src/domain',
+            description: 'El dominio vive exclusivamente en src/domain (no en src/index.ts, raíz, ni con class).',
+          },
+        ],
+        askRules: [],
+        neverRules: [],
+        snippets: [],
+      };
+
+      // None of these entity names are hardcoded, yet ALL are outside the exclusive domain surface:
+      expect(checkPathViolation('src/helpers/pricing.ts', fpPlaybook)).not.toBeNull();
+      expect(checkPathViolation('src/shared/discount.ts', fpPlaybook)).not.toBeNull();
+      expect(checkPathViolation('src/lib/tax.ts', fpPlaybook)).not.toBeNull();
+      expect(checkPathViolation('src/utils/cart.ts', fpPlaybook)).not.toBeNull();
+
+      // Canonical path inside src/domain/ is allowed:
+      expect(checkPathViolation('src/domain/pricing.ts', fpPlaybook)).toBeNull();
+      expect(checkPathViolation('src/domain/discount.ts', fpPlaybook)).toBeNull();
+    });
+
+    it('should respect authenticated anti-triggers when route is explicitly private or authenticated', () => {
+      const askPb: Playbook = {
+        language: 'go',
+        version: 1,
+        updatedAt: '2026-10-03',
+        topology: { pattern: 'Hexagonal', directories: [] },
+        invariants: [],
+        askRules: [
+          {
+            id: 'public-rate-limit',
+            type: 'ask',
+            title: 'Rate Limit en endpoints públicos',
+            surface: 'internal/ports/httpserver',
+            trigger: 'Endpoints públicos (POST /login o POST /register)',
+            antiTrigger: 'Health checks o rutas autenticadas',
+            prompt: '¿Deseas incluir rate limit?',
+            defaultAction: 'Sin rate limit',
+          },
+        ],
+        neverRules: [],
+        snippets: [],
+      };
+
+      // When requested as authenticated or private, anti-trigger MUST suppress the ask
+      expect(checkAskTrigger('POST /login autenticado con JWT', askPb)).toBeNull();
+      expect(checkAskTrigger('POST /login privado interno', askPb)).toBeNull();
+
+      // But public or normal endpoint MUST trigger it
+      expect(checkAskTrigger('POST /login público', askPb)).not.toBeNull();
+      expect(checkAskTrigger('POST /checkout público y GET /health', askPb)).not.toBeNull();
+    });
   });
 });

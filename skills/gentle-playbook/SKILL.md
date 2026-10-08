@@ -15,22 +15,26 @@ Every developer has an architectural "essence" for each programming language (e.
 ## Rule Hierarchy
 
 ### 1. Invariants (Normativa Global - Non-negotiable)
-- **Execution:** Silently and unconditionally applied.
-- **Language Invariants:** When generating files, endpoints, or structs in that language, adhere strictly to these invariants without prompting the user.
+- **Execution:** Direct and silent when compliant. If a user prompt or tool call conflicts with an invariant, the governance layer intercepts it (presenting interactive confirmation/redirection in TUI, or visible canonical redirection/blocking in headless mode).
+- **Language Invariants:** When generating files, endpoints, or structs in that language, adhere strictly to these invariants without prompting the user unless a conflict occurs.
   - Examples in Go:
     - Rejecting `\x00` and `%00` via input sanitization middleware.
     - Applying `validate:"notblank"` to DTO string fields.
     - Wrapping responses in standard envelopes (`Data`, `Error`, `Success`).
-- **Agent Governance Invariants:** Mandatory limits and restrictions on agent behavior and tools (e.g., forbidding `write` or `edit` without presenting approach and getting user approval first).
+- **Agent Governance Invariants:** Mandatory limits and restrictions on agent behavior and tools (e.g., requiring user approval before `write` or `edit`).
 
 ### 2. Ask Catalog (Conditional Patterns & Checkpoints)
-- **Execution:** Evaluated ONLY at boundary surfaces when their explicit **Trigger** fires and their **Anti-Trigger** does NOT match.
+- **Execution:** Evaluated on incoming prompts when their explicit content **Trigger** fires and their **Anti-Trigger** does NOT match.
 - Never spam the user with speculative questions.
 - If the trigger fires:
   - Formulate the single exact question specified in the rule.
-  - If approved, apply the associated canonical recipe or execute the requested action.
-  - If declined, fall back to the rule's documented `Default`.
+  - If approved, appends a directive instructing the model to include the approved extra alongside the base feature.
+  - If declined, appends a directive instructing the model to fall back to the rule's documented `Default Action` while still delivering the base feature.
 - **Agent Governance Asks:** Operational checkpoints where the agent must stop and ask before proceeding (e.g., asking before executing destructive bash commands, or asking before altering production configs).
+
+### 3. Never Rules (Prohibiciones Terminantes)
+- Categorical or specific bans on libraries, ORMs, and external frameworks (e.g., forbidding Gin, Express, Flask, GORM, or lodash).
+- When a rule mandates standard library (`stdlib`), alternative and cross-ecosystem third-party frameworks are categorically flagged.
 
 ## Commands & Operations
 
@@ -68,14 +72,17 @@ Or `/gentle-playbook-add [lang|agents]`.
 - Uses the model to synthesize the rule structure.
 - Shows a confirmation preview and saves it to the playbook.
 
-### Semantic Pre-flight & Write Enforcement
-- **Prompt Pre-flight:** The agent semantically evaluates whether incoming user prompts violate active rules, attempt to bypass checkpoints (`"sin consultar"`, `"no preguntes"`), or trigger conditional Ask rules.
-  - When directives are appended or Asks resolved, the extension returns `{ action: 'transform', text: event.text }`, guaranteeing native prompt mutation adoption in Pi.
+### Deterministic Pre-flight & Write Enforcement
+- **Prompt Pre-flight (`input` hook):** Evaluates incoming prompts ultra-fast in-memory (<1ms) via deterministic pattern matching against active invariants, never rules, checkpoint bypasses (`"sin consultar"`, `"no preguntes"`), and conditional Ask rules.
+  - Hook outputs:
+    - `{ action: 'transform', text: event.text }`: when directives are appended or Asks resolved, guaranteeing native prompt mutation adoption in Pi.
+    - `{ action: 'handled' }`: when an operation is cancelled or an unauthorized bypass is blocked.
+    - `{ action: 'continue' }`: for compliant prompts, internal extension messages, empty input, or unexpected errors caught in `catch`.
   - In headless / `--print` mode, conflicts redirect visibly to the canonical surface instead of silently aborting (`exit 0`).
   - Asks prompt interactively via `ui.confirm` without starving base feature delivery; the base feature is always implemented.
-- **Write Barrier (`tool_call`):** Tool execution (`write`/`edit`) enforces canonical topology and intercepts unauthorized paths or prefix spoofing (`../../`).
+- **Write Barrier (`tool_call` hook):** Tool execution (`write`/`edit`) enforces canonical topology and intercepts unauthorized paths or prefix spoofing (`../../`).
   - Evaluates `Agent Preferences` (`tools:write`, `tools:edit`, `tools:all`) across `never`, `ask`, and `invariant` rule types.
-  - Applies a strict **Fail-Closed** security policy: any unexpected exception in the governance barrier blocks the tool call to prevent unauthorized file mutation.
+  - Applies a strict **Fail-Closed** security policy: any unexpected exception in the governance barrier blocks the tool call (`block: true`) to prevent unauthorized file mutation.
 
 ### Managing & Deleting Rules Interactively
 Run:
