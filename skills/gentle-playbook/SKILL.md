@@ -1,16 +1,20 @@
 ---
 name: gentle-playbook
-description: "Consult and apply opinionated language architecture playbooks and agent supervision preferences in ~/.config/gentle-playbook/languages/. Triggers: playbook, normas del lenguaje, extraer playbook, gentle-playbook, arquitectura go, hexagono go, invariants de codigo, essence de programacion, agent preferences, gobernanza de agente."
+description: "Consult and apply opinionated language architecture playbooks, technology stacks, and local project playbooks in Pi. Triggers: playbook, normas del lenguaje, extraer playbook, gentle-playbook, stack playbook, arquitectura go, hexagono go, invariants de codigo, essence de programacion, agent preferences, gobernanza de agente."
 ---
 
 # Gentle Playbook: Essence & Architecture Enforcement
 
 ## Mental Model
-Every developer has an architectural "essence" for each programming language (e.g. Hexagonal topology in Go, null-byte sanitization middleware, custom `notblank` DTO validation, universal response envelopes, and specific delegation of database constraints) as well as **operational supervision preferences** for AI agents (guardrails, permissions, write approval, command checkpoints).
+Every developer has an architectural "essence" for each programming language (e.g. Hexagonal topology in Go, null-byte sanitization middleware, custom `notblank` DTO validation, universal response envelopes) as well as framework combinations (Stacks) and repository-specific standards.
 
-`gentle-playbook` stores and enforces:
-1. **Language Architecture Standards:** in `~/.config/gentle-playbook/languages/<lang>.md`.
-2. **Agent Supervision Preferences:** in `~/.config/gentle-playbook/languages/agents-preferences.md`.
+`gentle-playbook` stores and enforces rules across **4 hierarchical layers of authority**:
+1. **Local Project Playbook:** in `./playbook.md` (root of the workspace repository - supreme local authority).
+2. **Technology Stack Playbooks:** in `~/.config/gentle-playbook/stacks/<slug>.md` (Go+Gin, NestJS+TypeORM, etc.).
+3. **Language Architecture Standards:** in `~/.config/gentle-playbook/languages/<lang>.md` (Go, TypeScript, Python, etc.).
+4. **Agent Supervision Preferences:** in `~/.config/gentle-playbook/languages/agents-preferences.md`.
+
+> **Local Sovereignty:** Rules defined in `./playbook.md` have supreme authority. Any local rule governing a surface automatically masks subordinate stack and global rules for that surface during pre-flight (`input`) and tool execution (`tool_call`).
 
 ## Rule Hierarchy
 
@@ -39,61 +43,57 @@ Every developer has an architectural "essence" for each programming language (e.
 ## Commands & Operations
 
 ### Inspecting Active Playbook
-When working in a project with an active language (e.g. `go.mod`), inspect rules on-demand by calling the `playbook_consult` tool (or inspecting `~/.config/gentle-playbook/languages/<language>.md`). Consult topology, invariants, and agent rules before planning or creating files.
-If `agents-preferences.md` exists, its rules supervise and delimit agent tool execution across all projects.
+When working in a project with active technologies, inspect rules on-demand by calling the `playbook_consult` tool (or inspecting active files in `playbook.md` / `stacks/` / `languages/`). Consult topology, invariants, and agent rules before planning or creating files.
 
 Model Tool:
-- `playbook_consult`: Call with optional `language` (e.g. `'go'`, `'agents'`) or `surface` (e.g. `'internal/ports'`, `'tools:write'`, `'git:push'`) to retrieve rules on-demand without system prompt bloat.
+- `playbook_consult`: Call with optional `language` (e.g. `'local'`, `'go'`, `'go-gin'`, `'agents'`) or `surface` (e.g. `'internal/ports'`, `'tools:write'`, `'git:push'`) to retrieve rules on-demand across all 4 layers without system prompt bloat.
 
 Interactive commands in Pi:
 - `/playbook` or `/gentle-playbook`: Interactive selector and detailed inventory of active playbooks.
-- `/playbook show <lang|agents> [--full]`: Displays the playbook's rules, triggers, and prohibitions in chat.
+- `/playbook show <lang|agents|stack>`: Displays the playbook's rules, triggers, and prohibitions in chat.
+
+### Managing Stacks: `/playbook stack`
+- `/playbook stack list`: Lists all installed stacks, their required flags, and rule counts.
+- `/playbook stack <prompt>` (or `create`): Synthesizes a new stack from natural language (e.g., `/playbook stack "nest con typeorm y postgres"`).
+- `/playbook stack delete <slug>`: Deletes a stack.
+- **Structural Subtyping (*Duck Typing*):** A stack activates if and only if all its required flags match the workspace (`requiredFlags.every`). Multiple stacks can activate concurrently in polyglot repos.
+- **Collision Resolution:** If two active stacks conflict on the same surface, the user resolves it interactively and the winning rule is persisted to `./playbook.md` as permanent local authority.
 
 ### Adding Rules Interactively
 Run:
 ```
-/playbook add [lang|agents]
+/playbook add [target]
 ```
-Or `/gentle-playbook-add [lang|agents]`.
+Or `/gentle-playbook-add [target]`.
 
-- If no argument is provided, an interactive prompt will ask:
+- Select from **4 destinations**:
   - 🤖 **Preferencias de Agente** (Supervisión y Gobernanza de IA)
-  - 💻 **Regla de Arquitectura de Lenguaje** (Go, TypeScript, Python, etc.)
-- Next, prompts for the natural language description (e.g., *"no usar librerías externas para http"* o *"no hacer write sin aprobacion"*).
-- Pre-checks against hostile prompt injection or meta-instruction patterns.
-- Lets the user select rule type:
-  - `[NORMATIVA]` (invariante dura).
-  - `[ASK]` (checkpoint condicional).
-  - `[PROHIBICIÓN / NEVER]` (restricción terminante de no hacer).
-- If it is a Never rule, prompts for scope:
-  - 🎯 **Específica**: solo este elemento/librería.
-  - 🌐 **Categórica / Familia**: este elemento y cualquier alternativa similar de terceros.
-  - ✍️ **Personalizada**: alcance a medida con sanitización.
-- Uses the model to synthesize the rule structure.
-- Shows a confirmation preview and saves it to the playbook.
+  - 🏠 **Proyecto Local** (`playbook.md` en la raíz de este repositorio)
+  - 📦 **Stack Tecnológico** (combinación de tecnologías/frameworks)
+  - 🌐 **Lenguaje Global** (Go, TypeScript, etc.)
+- Prompts for description, performs prompt injection pre-check, and allows selecting rule type (`INVARIANT`, `ASK`, `NEVER`).
+- Live collision check against active layers with options to override, keep existing, or reformulate.
+- Shows a confirmation preview and saves it to the chosen layer.
 
 ### Deterministic Pre-flight & Write Enforcement
-- **Prompt Pre-flight (`input` hook):** Evaluates incoming prompts ultra-fast in-memory (<1ms) via deterministic pattern matching against active invariants, never rules, checkpoint bypasses (`"sin consultar"`, `"no preguntes"`), and conditional Ask rules.
-  - Hook outputs:
-    - `{ action: 'transform', text: event.text }`: when directives are appended or Asks resolved, guaranteeing native prompt mutation adoption in Pi.
-    - `{ action: 'handled' }`: when an operation is cancelled or an unauthorized bypass is blocked.
-    - `{ action: 'continue' }`: for compliant prompts, internal extension messages, empty input, or unexpected errors caught in `catch`.
-  - In headless / `--print` mode, conflicts redirect visibly to the canonical surface instead of silently aborting (`exit 0`).
-  - Asks prompt interactively via `ui.confirm` without starving base feature delivery; the base feature is always implemented.
-- **Write Barrier (`tool_call` hook):** Tool execution (`write`/`edit`) enforces canonical topology and intercepts unauthorized paths or prefix spoofing (`../../`).
-  - Evaluates `Agent Preferences` (`tools:write`, `tools:edit`, `tools:all`) across `never`, `ask`, and `invariant` rule types.
-  - Applies a strict **Fail-Closed** security policy: any unexpected exception in the governance barrier blocks the tool call (`block: true`) to prevent unauthorized file mutation.
+- **Prompt Pre-flight (`input` hook):** Evaluates incoming prompts in-memory (<1ms) against all active layers in order (`Local > Stack > Global > Agent`), with local surface masking.
+- **Write Barrier (`tool_call` hook):** Enforces canonical topology and intercept unauthorized paths or prefix spoofing (`../../`). Applies a strict **Fail-Closed** security policy.
 
 ### Managing & Deleting Rules Interactively
 Run:
 ```
-/playbook delete [lang|agents] [--rule <id>]
+/playbook delete [lang|agents|stack] [--rule <id>]
 ```
-- Interactive guided menus (`ui.select` and `ui.confirm`) to surgically delete a specific rule or safely erase an entire language playbook with dual confirmation.
+- Interactive guided menus (`ui.select` and `ui.confirm`) to surgically delete a specific rule or safely erase an entire playbook.
 
-### Extracting a New Playbook from a Reference Repo
-Run the extraction command in Pi:
+### Extracting a New Playbook from a Reference Repo: Triage 1 a 1
+Run:
 ```bash
 /playbook extract [path-to-repo] [--lang <lang>]
 ```
-This runs the Essence Explorer Agent backed by CodeGraph (or native file exploration fallback) to analyze topology, count empirical evidence (file:line), detect invariants, ask checkpoints and prohibitions, and perform AI-driven semantic diffing with 1-to-1 interactive conflict arbitration in the TUI before writing to disk.
+Runs the Essence Explorer Agent backed by CodeGraph. Instead of a bulk dump, it guides the user through an **Interactive 1-on-1 Triage Wizard**:
+- 🌐 **1. Global:** Save to global language playbook.
+- 📦 **2. Stack:** Save to an existing or newly created stack.
+- 🏠 **3. Proyecto Local:** Save strictly to `./playbook.md`.
+- ✏️ **4. Modificar regla:** Refine the rule with AI prompt loop before classification.
+- 🗑️ **5. Descartar regla:** Discard the rule and proceed.

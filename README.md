@@ -16,9 +16,29 @@ Cuando desarrollás software con agentes de IA, cada nuevo repositorio o proyect
 
 ---
 
-## 🏛️ Modelo Mental & Taxonomía de Reglas
+## 🏛️ Modelo Mental & Gobernanza Multicapa
 
-`gentle-playbook` divide las preferencias arquitectónicas y de gobernanza en tres categorías estrictas:
+`gentle-playbook` organiza las preferencias arquitectónicas y de gobernanza a través de una **jerarquía estricta de 4 capas de autoridad**:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ 1. LOCAL (./playbook.md en la raíz del repositorio)         │  ◄── Máxima autoridad soberana
+├─────────────────────────────────────────────────────────────┤
+│ 2. STACK (~/.config/gentle-playbook/stacks/<slug>.md)       │  ◄── Go+Gin, Nest+TypeORM, etc.
+├─────────────────────────────────────────────────────────────┤
+│ 3. GLOBAL (~/.config/gentle-playbook/languages/<lang>.md)   │  ◄── Go puro, TS puro, etc.
+├─────────────────────────────────────────────────────────────┤
+│ 4. AGENTE (~/.config/gentle-playbook/languages/agents_*.md) │  ◄── Gobernanza operativa de IA
+└─────────────────────────────────────────────────────────────┘
+```
+
+> **Principio de Soberanía Local:** Las reglas definidas en `./playbook.md` tienen precedencia absoluta. Si una regla local gobierna una superficie (`surface`), enmascara automáticamente a cualquier regla subordinada de Stack o Global que toque esa misma superficie en los hooks de pre-vuelo (`input`) y de herramientas (`tool_call`).
+
+---
+
+## 🏷️ Taxonomía de Reglas
+
+Dentro de cualquier ámbito (Local, Stack, Global o Agente), las reglas se clasifican en tres categorías estrictas:
 
 ```
                     ┌─────────────────────────┐
@@ -189,42 +209,68 @@ A través del puntero de runtime en `before_agent_start` y la herramienta `playb
 
 ---
 
-### 5. Extracción de Esencia desde un Repositorio: `/playbook extract`
-Si ya tenés un proyecto de referencia donde programaste con tu estilo (por ejemplo un backend en Go, un servicio en TypeScript, Rust o Python):
+### 5. Stacks Tecnológicos & Subtipado Estructural: `/playbook stack`
+Los stacks permiten gobernar combinaciones de tecnologías (ej: `Go + Gin`, `NestJS + TypeORM`, `React + Tailwind`, `Solidity + Hardhat`) sin contaminar las normas del lenguaje global:
 
 ```bash
-# Dentro de Pi (TUI: Agente Explorador con CodeGraph, Diff Semántico y Arbitraje 1 a 1)
-/playbook extract [/ruta/al/repo] [--lang <lenguaje>]
+# Listar stacks instalados, sus banderas requeridas y cantidad de reglas
+/playbook stack list
+
+# Crear un stack sintetizado con IA a partir de lenguaje natural
+/playbook stack "go con gin y gorm"
+/playbook stack create "nest con typeorm y postgres"
+
+# Eliminar un stack que ya no utilices
+/playbook stack delete go-gin
 ```
 
-#### 🧠 ¿Cómo funciona la extracción y el arbitraje agéntico en Pi?
-A diferencia de herramientas que buscan palabras fijas o linters de juguete, `/playbook extract` despliega un **Agente Explorador de Esencia** respaldado por **CodeGraph**:
+#### 🧩 Subtipado Estructural (*Duck Typing*):
+Un Stack se activa en un proyecto si y solo si el proyecto cumple con **todas** las banderas requeridas (`requiredFlags.every`). Si el proyecto incluye más tecnologías (ej: backend Go+Gin y frontend React), ambos stacks se activan en paralelo armoniosamente.
 
-1. **Exploración Profunda con CodeGraph & Fallback Nativo:**
-   - Si `codegraph` está disponible en tu sistema (`CODEGRAPH_BIN`), el agente indexa el repositorio completo (`codegraph ensureIndex`) y extrae el mapa integral de símbolos, interfaces, handlers, middlewares y tipos con sus números de línea exactos.
-   - Si CodeGraph no está presente, inspecciona el árbol de archivos y manifiestos de dependencias (`package.json`, `go.mod`, `Cargo.toml`, etc.) de forma nativa.
-2. **La Regla de Oro: "Elección vs Imposición":** El agente evalúa si existía una alternativa razonable en ese stack y qué eligió el autor consistentemente. Descarta lo obvio impuesto por el framework y captura la verdadera huella digital arquitectónica.
-3. **Verificación Cuantitativa (Criterios instruidos al agente extractor):** No generaliza por intuición. Se instruye al agente a buscar evidencia empírica (`cumple / total`) y contraejemplos:
-   - **≥ 90% y ≥ 5 casos:** Se propone registrar como **Normativa Invariante (`INVARIANT`)**.
-   - **60-89% o condicional a contexto:** Se propone registrar como **Punto de Control / Receta (`ASK_RULE`)**.
-   - **< 60% o < 3 casos:** Se descarta como ruido.
-4. **Ausencias Deliberadas (`Nunca`):** Identifica lo que el proyecto evita sistemáticamente cuando era una opción disponible (ej: *"No usar ORM; queries en SQL explícito"*, *"No usar globals"*, *"Sin `any`"*).
-5. **Arbitraje Semántico con IA (Sin comparaciones fijas por ID):**
-   - Cuando ya existe un playbook previo para ese lenguaje, el modelo compara conceptualmente el borrador extraído con tus reglas guardadas.
-   - Detecta **redundancias semánticas** (reglas que dicen lo mismo con palabras distintas, como *"No usar interfaces Any"* vs *"No usar una interfaz que reciba cualquier tipo de dato"*) y **contradicciones directas** (ej: *"Usar Enums obligatorios"* vs *"Prohibir Enums"*).
-   - Si el agente se interrumpe o falla, aborta limpiamente sin corromper el playbook.
-6. **Resolución Interactiva de Conflictos 1 a 1 en el TUI:**
-   Para cada conflicto detectado, Pi te muestra una tarjeta comparativa de la versión actual guardada vs la nueva propuesta y te permite elegir:
-   - `🛡️ 1. Conservar versión actual`
-   - `📥 2. Reemplazar por la nueva versión`
-   - `💡 3. Convertir en regla condicional (Ask Rule)`
-   - `🤖 4. Instruir a la IA para fusionar/resolver` *(le das una indicación en lenguaje natural y la IA redacta la síntesis definitiva entre A y B)*
-   - `❌ Cancelar todo el merge` *(aborta de inmediato sin tocar el disco)*
-7. **Persistencia con Confirmación Previa:** Nada se escribe en disco sin que vos confirmes explícitamente el guardado final.
+#### ⚔️ Resolución de Conflictos Multistack:
+Si dos stacks activos tienen reglas que chocan en la misma superficie:
+1. Se le presentan al desarrollador ambas reglas completas con sus contenidos en el TUI.
+2. El usuario elige cuál adoptar o redacta una norma custom.
+3. La decisión **se aterriza automáticamente en el `./playbook.md` local del repositorio**, cerrando el conflicto definitivamente.
 
 ---
 
-### 6. Gestión y Eliminación Quirúrgica: `/playbook delete`
+### 6. Adición de Reglas en 4 Ámbitos: `/playbook add`
+Al agregar una regla manual, podés dirigirla a cualquiera de las 4 capas de gobernanza:
+
+```bash
+/playbook add
+```
+
+1. 🤖 **Preferencias de Agente** (Supervisión y Gobernanza de IA)
+2. 🏠 **Proyecto Local** (`./playbook.md` en la raíz del repositorio)
+3. 📦 **Stack Tecnológico** (selecciona o crea un stack)
+4. 🌐 **Lenguaje Global** (Go, TypeScript, Python, etc.)
+
+*Alerta de colisión en vivo:* Si la regla choca con una regla existente en otra capa, el sistema te muestra el enfrentamiento y te permite elegir si sobreescribís, conservás la versión existente o reformulás la regla.
+
+---
+
+### 7. Extracción de Esencia y Triage 1 a 1: `/playbook extract`
+Si ya tenés un proyecto de referencia donde programaste con tu estilo:
+
+```bash
+# Dentro de Pi (TUI: Agente Explorador con CodeGraph y Triage Interactivo 1 a 1)
+/playbook extract [/ruta/al/repo] [--lang <lenguaje>]
+```
+
+#### 🎯 Wizard de Triage Regla por Regla (1 a 1):
+A diferencia del volcado masivo en bloque, `/playbook extract` pasa **regla por regla** con una tarjeta interactiva en el TUI:
+
+- 🌐 **1. Global:** guarda la regla en el lenguaje base (`languages/<lang>.md`).
+- 📦 **2. Stack:** asigna la regla a un stack tecnológico existente o nuevo.
+- 🏠 **3. Proyecto Local:** guarda la regla exclusivamente en el `./playbook.md` de este repositorio.
+- ✏️ **4. Modificar regla:** ingresás un prompt en lenguaje natural, la IA refina la regla y te la vuelve a mostrar en el menú para clasificarla.
+- 🗑️ **5. Descartar regla:** descarta la regla y avanza a la siguiente.
+
+---
+
+### 8. Gestión y Eliminación Quirúrgica: `/playbook delete`
 
 Administrá y depurá tus normas directamente desde el TUI de Pi con asistentes interactivos guiados:
 
@@ -253,8 +299,9 @@ Toda la funcionalidad de `gentle-playbook` está integrada de forma nativa en Pi
 |---|---|---|
 | `/playbook` [list] | `/gentle-playbook` | Menú interactivo: auditar playbooks guardados, inventario de reglas y estado. |
 | `/playbook show <lang\|agents>` | `/gentle-playbook show` | Despliega en el chat las normas, checkpoints y prohibiciones del lenguaje (flag `--full` incluye snippets de código). |
-| `/playbook extract [path]` | `/gentle-playbook extract` | Lanza el **Agente de Esencia** con CodeGraph, diff semántico de IA y arbitraje 1 a 1 en el TUI (soporta flag `--lang <lenguaje>`). |
-| `/playbook add [lang\|agents]` | `/gentle-playbook-add` | Flujo interactivo guiado para agregar una nueva regla sintetizada con LLM y validación anti-inyección. |
+| `/playbook extract [path]` | `/gentle-playbook extract` | Lanza el **Agente de Esencia** con CodeGraph y **Triage interactivo 1 a 1** (Global, Stack, Local, Modificar, Descartar). |
+| `/playbook add [lang\|agents]` | `/gentle-playbook-add` | Flujo interactivo guiado para agregar una nueva regla en **4 ámbitos** (Agente, Local, Stack, Global) con alerta de colisiones. |
+| `/playbook stack <list\|create\|delete>` | `/playbook-stack` | Crea, lista y gestiona Stacks Tecnológicos con detección estructural por banderas (`requiredFlags.every`). |
 | `/playbook delete [lang\|agents]` | `/gentle-playbook delete` | Menú interactivo para eliminar reglas individuales quirúrgicamente (soporta flag `--rule <id>`) o borrar playbooks completos. |
 
 ---
