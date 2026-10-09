@@ -126,7 +126,13 @@ export function heuristicFallbackStack(userPrompt: string): SynthesizedStack {
   if (/\bpython\b/.test(text)) flags.push('python');
   if (/\bfastapi\b/.test(text)) flags.push('fastapi');
   if (/\bdjango\b/.test(text)) flags.push('django');
+  if (/\bsqlalchemy\b/.test(text)) flags.push('sqlalchemy');
   if (/\brust\b/.test(text)) flags.push('rust');
+  if (/\bkafka\b/.test(text)) flags.push('kafka');
+  if (/\b(?:postgres|postgresql)\b/.test(text)) flags.push('postgres');
+  if (/\bredis\b/.test(text)) flags.push('redis');
+  if (/\bgraphql\b/.test(text)) flags.push('graphql');
+  if (/\btailwind\b/.test(text)) flags.push('tailwind');
 
   const cleanSlug = flags.length > 0
     ? flags.join('-')
