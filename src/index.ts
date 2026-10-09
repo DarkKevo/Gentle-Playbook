@@ -20,6 +20,7 @@ import { getLanguageMenuLabels, resolveLanguage } from './core/languages.js';
 import { handleStackCommand, findCollidingRules } from './core/stack-handler.js';
 import { detectActiveStacks } from './core/stack-detector.js';
 import { heuristicFallbackStack } from './core/stack-synthesizer.js';
+import { runExtractTriage } from './core/extract-triage.js';
 
 export interface ExtensionAPI {
   registerCommand(
@@ -919,16 +920,6 @@ export default function (pi: ExtensionAPI) {
           const draft: Playbook = result.playbook;
           const evidenceReport = result.evidenceReport;
 
-          const existing = await storage.getPlaybook(detectedLang);
-          ctx.ui?.notify('Comparando semánticamente reglas con tu playbook existente...', 'info');
-          let diff: PlaybookDiffResult;
-          try {
-            diff = await computeSemanticPlaybookDiff(draft, existing, completePrompt);
-          } catch {
-            ctx.ui?.notify('❌ Ha habido un problema con tu agente, reintenta.', 'error');
-            return;
-          }
-
           // Si hay reporte de evidencia, mostrárselo al usuario
           if (evidenceReport) {
             pi.sendMessage({
@@ -938,207 +929,42 @@ export default function (pi: ExtensionAPI) {
             });
           }
 
-          const resolutions: Record<string, RuleResolution> = {};
+          // Ejecutar Triage interactivo 1 a 1 (Global vs Stack vs Local vs Modificar vs Descartar)
+          const triageSummary = await runExtractTriage({
+            draft,
+            detectedLang,
+            projectPath: resolvedPath,
+            storage,
+            ctx,
+            pi,
+            completePrompt,
+            autoConfirm,
+          });
 
-          // Si hay conflictos y la UI está disponible, resolver 1 a 1 interactivamente (#4 A, #4 C)
-          if (diff.stats.conflictRules > 0) {
-            ctx.ui?.notify(
-              `Se detectaron ${diff.stats.conflictRules} conflicto(s) con tu playbook existente. Iniciando resolución interactiva...`,
-              'info'
-            );
+          const stackSummaryParts = Object.entries(triageSummary.savedToStack).map(
+            ([slug, count]) => `${count} en Stack [${slug}]`
+          );
+          const totalSaved =
+            triageSummary.savedToGlobal +
+            triageSummary.savedToProject +
+            Object.values(triageSummary.savedToStack).reduce((a, b) => a + b, 0);
 
-            // Recolectar items en conflicto
-            const conflicts: {
-              type: 'invariant' | 'ask' | 'never' | 'snippet';
-              id: string;
-              reason?: string;
-              existing: any;
-              incoming: any;
-            }[] = [];
-
-            for (const d of diff.invariants) {
-              if (d.status === 'conflict') {
-                conflicts.push({ type: 'invariant', id: d.incoming.id, reason: d.reason, existing: d.existing, incoming: d.incoming });
-              }
-            }
-            for (const d of diff.askRules) {
-              if (d.status === 'conflict') {
-                conflicts.push({ type: 'ask', id: d.incoming.id, reason: d.reason, existing: d.existing, incoming: d.incoming });
-              }
-            }
-            for (const d of diff.neverRules) {
-              if (d.status === 'conflict') {
-                conflicts.push({ type: 'never', id: d.incoming.id, reason: d.reason, existing: d.existing, incoming: d.incoming });
-              }
-            }
-            for (const d of diff.snippets) {
-              if (d.status === 'conflict') {
-                conflicts.push({ type: 'snippet', id: d.incoming.id, reason: d.reason, existing: d.existing, incoming: d.incoming });
-              }
-            }
-
-            const total = conflicts.length;
-            for (let i = 0; i < total; i++) {
-              const c = conflicts[i];
-
-              const existDesc = c.existing.description || c.existing.prompt || c.existing.code || '';
-              const incDesc = c.incoming.description || c.incoming.prompt || c.incoming.code || '';
-              const existSurface = c.existing.surface ? `\`${c.existing.surface}\`` : 'N/A';
-              const incSurface = c.incoming.surface ? `\`${c.incoming.surface}\`` : 'N/A';
-              const existTitle = c.existing.title || c.id;
-              const incTitle = c.incoming.title || c.id;
-
-              pi.sendMessage({
-                customType: 'gentle-playbook-conflict',
-                content: `### ⚔️ Conflicto (${i + 1}/${total}): [${c.type.toUpperCase()}:${c.id}]\n\n` +
-                  `**Versión Actual (En tu Playbook):**\n` +
-                  `- **Título:** ${existTitle}\n` +
-                  `- **Surface:** ${existSurface}\n` +
-                  `- **Texto/Código:** ${existDesc}\n\n` +
-                  `**Versión Nueva (Propuesta por el Extract):**\n` +
-                  `- **Título:** ${incTitle}\n` +
-                  `- **Surface:** ${incSurface}\n` +
-                  `- **Texto/Código:** ${incDesc}\n\n` +
-                  `*Motivo de discrepancia:* ${c.reason || 'Difiere del contenido guardado'}`,
-                display: true,
-              });
-
-              if (ctx.ui?.select) {
-                const choice = await ctx.ui.select(
-                  `[Conflicto ${i + 1}/${total}: ${c.id}] Selecciona la acción para resolver:`,
-                  [
-                    '🛡️ 1. Conservar versión actual (mantener mi regla existente)',
-                    '📥 2. Reemplazar por la nueva versión (adoptar propuesta del extract)',
-                    '💡 3. Convertir en regla condicional (crear Ask Rule con la nueva)',
-                    '🤖 4. Instruir a la IA para fusionar/resolver (dar indicación en lenguaje natural)',
-                    '❌ Cancelar todo el merge (no guardar cambios en disco)',
-                  ]
-                );
-
-                if (!choice || choice.includes('Cancelar')) {
-                  ctx.ui?.notify('Extracción cancelada por el usuario. No se guardaron cambios en disco.', 'info');
-                  return;
-                }
-
-                if (choice.includes('1. Conservar')) {
-                  resolutions[c.id] = { ruleId: c.id, action: 'reject' };
-                } else if (choice.includes('2. Reemplazar')) {
-                  resolutions[c.id] = { ruleId: c.id, action: 'accept' };
-                } else if (choice.includes('3. Convertir')) {
-                  resolutions[c.id] = {
-                    ruleId: c.id,
-                    action: c.type === 'invariant' ? 'convert_to_ask' : 'convert_to_invariant',
-                  };
-                } else if (choice.includes('4. Instruir a la IA')) {
-                  if (ctx.ui?.input) {
-                    const userInstruction = await ctx.ui.input(
-                      `[${c.id}] Escribe tu instrucción para la IA (ej: 'fusiona ambas...', 'conserva la surface de A pero texto de B'):`,
-                      'Fusiona ambas reglas tomando lo mejor de cada una'
-                    );
-                    if (userInstruction && userInstruction.trim()) {
-                      ctx.ui?.notify('Sintetizando regla unificada con la IA...', 'info');
-                      let aiResolved;
-                      try {
-                        aiResolved = await resolveConflictWithAI({
-                          ruleType: c.type,
-                          language: detectedLang,
-                          existingRule: c.existing,
-                          incomingRule: c.incoming,
-                          userInstruction: userInstruction.trim(),
-                          completePrompt,
-                        });
-                      } catch {
-                        ctx.ui?.notify('❌ Ha habido un problema con tu agente, reintenta.', 'error');
-                        return;
-                      }
-
-                      resolutions[c.id] = {
-                        ruleId: c.id,
-                        action: 'custom_edit',
-                        customTitle: aiResolved.title,
-                        customSurface: aiResolved.surface,
-                        customDescription: aiResolved.description,
-                      };
-
-                      pi.sendMessage({
-                        customType: 'gentle-playbook-ai-resolution',
-                        content: `✓ **Regla sintetizada por IA para \`${c.id}\`:**\n` +
-                          `- **Título:** ${aiResolved.title}\n` +
-                          `- **Surface:** \`${aiResolved.surface}\`\n` +
-                          `- **Descripción:** ${aiResolved.description}`,
-                        display: true,
-                      });
-                    } else {
-                      resolutions[c.id] = { ruleId: c.id, action: 'reject' };
-                    }
-                  } else {
-                    resolutions[c.id] = { ruleId: c.id, action: 'reject' };
-                  }
-                }
-              }
-            }
-          }
-
-          // Confirmación interactiva si la UI lo permite, o fail-safe sin UI
-          if (ctx.ui?.confirm) {
-            const summaryParts = [];
-            if (diff.stats.newRules > 0) summaryParts.push(`${diff.stats.newRules} nuevas`);
-            if (diff.stats.conflictRules > 0) summaryParts.push(`${diff.stats.conflictRules} conflictos arbitrados`);
-            const summaryStr = summaryParts.length > 0 ? summaryParts.join(', ') : 'sin cambios estructurales';
-
-            const confirmed = await ctx.ui.confirm(
-              'Aprobar guardado de playbook',
-              `¿Deseas guardar los cambios en el playbook de ${detectedLang}? (${summaryStr})`
-            );
-            if (!confirmed) {
-              ctx.ui?.notify('Guardado cancelado por el usuario. No se modificó el playbook en disco.', 'info');
-              return;
-            }
-          } else if (!autoConfirm) {
-            // Fail-safe: Sin confirmación interactiva y sin --yes, no se escribe en disco
-            ctx.ui?.notify(
-              'Extracción completada sin guardar: se requiere confirmación interactiva o el flag --yes para escribir en disco.',
-              'warning'
-            );
-            pi.sendMessage({
-              customType: 'gentle-playbook-draft',
-              content: `⚠️ **Extracción finalizada (Solo Lectura):**\nNo hay interfaz interactiva de confirmación y no se pasó \`--yes\`. No se modificó el disco.\n\n` + formatPlaybookForDisplay(mergePlaybooks(draft, existing, resolutions, diff)),
-              display: true,
-            });
-            return;
-          }
-
-          const merged = mergePlaybooks(draft, existing, resolutions, diff);
-          await storage.savePlaybook(merged);
-
-          let conflictMsg = '';
-          if (diff.stats.conflictRules > 0) {
-            const resCount = Object.keys(resolutions).length;
-            if (resCount > 0) {
-              const accepted = Object.values(resolutions).filter((r) => r.action === 'accept').length;
-              const converted = Object.values(resolutions).filter((r) => r.action.startsWith('convert')).length;
-              const aiCustom = Object.values(resolutions).filter((r) => r.action === 'custom_edit').length;
-              const kept = Object.values(resolutions).filter((r) => r.action === 'reject').length;
-              const details: string[] = [];
-              if (accepted > 0) details.push(`${accepted} reemplazadas`);
-              if (aiCustom > 0) details.push(`${aiCustom} fusionadas con IA`);
-              if (converted > 0) details.push(`${converted} convertidas`);
-              if (kept > 0) details.push(`${kept} conservadas`);
-              const detailStr = details.length > 0 ? ` (${details.join(', ')})` : '';
-              conflictMsg = `, ${resCount} conflictos arbitrados${detailStr}`;
-            } else {
-              conflictMsg = `, ${diff.stats.conflictRules} conflictos (versiones existentes preservadas)`;
-            }
-          }
+          const summaryLines = [
+            `- **Global (${detectedLang.toUpperCase()}):** ${triageSummary.savedToGlobal} regla(s)`,
+            `- **Proyecto Local (playbook.md):** ${triageSummary.savedToProject} regla(s)`,
+            `- **Stacks Tecnológicos:** ${stackSummaryParts.join(", ") || "0 regla(s)"}`,
+            `- **Modificadas vía IA:** ${triageSummary.modified}`,
+            `- **Descartadas:** ${triageSummary.discarded}`,
+          ];
 
           ctx.ui?.notify(
-            `Playbook para ${detectedLang} actualizado: ${diff.stats.newRules} nuevas, ${diff.stats.identicalRules} idénticas${conflictMsg}.`,
-            'info'
+            `Extracción y Triage completados: ${totalSaved} regla(s) guardadas en sus respectivos ámbitos.`,
+            "info"
           );
 
           pi.sendMessage({
-            customType: 'gentle-playbook',
-            content: formatPlaybookForDisplay(merged),
+            customType: 'gentle-playbook-triage-summary',
+            content: `### 🎯 Resumen de Extracción y Triage 1 a 1\n\n${summaryLines.join("\n")}`,
             display: true,
           });
         } catch (err: any) {
