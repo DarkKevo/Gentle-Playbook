@@ -10,6 +10,7 @@ import {
 import { detectActiveStacks } from './stack-detector.js';
 import { heuristicFallbackStack } from './stack-synthesizer.js';
 import { findCollidingRules } from './stack-handler.js';
+import { detectPromptInjection } from './security.js';
 
 export interface ExtractTriageOptions {
   draft: Playbook;
@@ -365,6 +366,16 @@ export async function runExtractTriage(
 
         if (!userAdjustment || !userAdjustment.trim()) {
           ctx.ui?.notify('Modificación cancelada, volviendo a opciones.', 'info');
+          continue;
+        }
+
+        // Hardening: Pre-check against prompt injection / jailbreak patterns
+        const check = detectPromptInjection(userAdjustment.trim());
+        if (check.isSuspicious) {
+          ctx.ui?.notify(
+            `❌ Ajuste rechazado: se detectaron patrones de meta-instrucción o inyección (${check.reason}).`,
+            'error'
+          );
           continue;
         }
 

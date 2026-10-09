@@ -166,13 +166,82 @@ export function validateRuleContent(rule: {
 }
 
 /**
- * Filters a Playbook object, discarding any rule that fails security validation.
+ * Sanitizes header and frontmatter metadata strings, stripping newlines, control chars,
+ * YAML delimiters, and potential key-value injections to guarantee strict scalar YAML values.
+ */
+export function sanitizeMetadataValue(val?: string, maxLen = 120): string {
+  if (!val || typeof val !== 'string') return '';
+  return val
+    .replace(/[\r\n\0]/g, ' ')
+    .replace(/---/g, '')
+    .replace(/[:#]/g, '-') // Neutralize YAML key delimiter and comment characters in frontmatter
+    .trim()
+    .slice(0, maxLen);
+}
+
+/**
+ * Validates metadata fields in a playbook against prompt injection patterns and control injections.
+ */
+export function validatePlaybookMetadata(playbook: import('./schema.js').Playbook): {
+  valid: boolean;
+  reason?: string;
+} {
+  const metadataFields = [
+    { name: 'stackName', val: playbook.stackName },
+    { name: 'stackId', val: playbook.stackId },
+    { name: 'pattern', val: playbook.topology?.pattern },
+  ];
+
+  for (const { name, val } of metadataFields) {
+    if (val) {
+      const check = detectPromptInjection(val);
+      if (check.isSuspicious) {
+        return {
+          valid: false,
+          reason: `Metadata field '${name}' triggered security filter: ${check.reason}`,
+        };
+      }
+    }
+  }
+
+  if (playbook.requiredFlags) {
+    for (const flag of playbook.requiredFlags) {
+      const check = detectPromptInjection(flag);
+      if (check.isSuspicious) {
+        return {
+          valid: false,
+          reason: `Metadata flag '${flag}' triggered security filter: ${check.reason}`,
+        };
+      }
+    }
+  }
+
+  return { valid: true };
+}
+
+/**
+ * Filters a Playbook object, discarding any rule that fails security validation
+ * and sanitizing metadata to prevent header/frontmatter injections.
  */
 export function filterPlaybookRules(playbook: import('./schema.js').Playbook): {
   playbook: import('./schema.js').Playbook;
   discardedCount: number;
 } {
   let discardedCount = 0;
+
+  // 1. Validate and sanitize metadata
+  const metaCheck = validatePlaybookMetadata(playbook);
+  let safeStackName = playbook.stackName ? sanitizeMetadataValue(playbook.stackName) : undefined;
+  let safeStackId = playbook.stackId ? sanitizeMetadataValue(playbook.stackId) : undefined;
+  let safeFlags = playbook.requiredFlags
+    ? playbook.requiredFlags.map((f) => sanitizeMetadataValue(f, 40)).filter(Boolean)
+    : undefined;
+
+  if (!metaCheck.valid) {
+    // If metadata contains injection, neutralize fields
+    if (safeStackName) safeStackName = 'Custom Stack';
+    if (safeStackId) safeStackId = 'custom-stack';
+  }
 
   const validInvariants = playbook.invariants.filter((r) => {
     const res = validateRuleContent(r);
@@ -206,6 +275,9 @@ export function filterPlaybookRules(playbook: import('./schema.js').Playbook): {
 
   const cleaned: import('./schema.js').Playbook = {
     ...playbook,
+    stackName: safeStackName,
+    stackId: safeStackId,
+    requiredFlags: safeFlags,
     invariants: validInvariants,
     askRules: validAskRules,
     neverRules: validNeverRules && validNeverRules.length > 0 ? validNeverRules : undefined,

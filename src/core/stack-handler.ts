@@ -454,3 +454,66 @@ export async function getActiveWorkspacePlaybooks(
 
   return list;
 }
+
+/**
+ * Filtra y enmascara reglas en playbooks subordinados (Stack, Global) si una regla
+ * en una capa superior (Local Project playbook.md) ya gobierna o establece una norma
+ * para esa misma superficie o ruta.
+ */
+export function maskSubordinatePlaybooks(playbooks: Playbook[]): Playbook[] {
+  if (playbooks.length <= 1) return playbooks;
+
+  // Coleccionar superficies gobernadas por capas superiores en orden
+  const governedSurfaces: string[] = [];
+  const result: Playbook[] = [];
+
+  for (const pb of playbooks) {
+    // Las preferencias de agente nunca se enmascaran por reglas de código
+    if (pb.language === 'agents-preferences' || pb.scope === 'agents') {
+      result.push(pb);
+      continue;
+    }
+
+    const isLocalProject = pb.scope === 'project' || pb.language === 'project';
+
+    if (isLocalProject) {
+      // Registrar todas las superficies de la capa local suprema
+      for (const r of [...pb.invariants, ...pb.askRules, ...(pb.neverRules || [])]) {
+        if (r.surface && r.surface !== 'src/' && r.surface !== 'general') {
+          governedSurfaces.push(r.surface.trim().toLowerCase());
+        }
+      }
+      result.push(pb);
+      continue;
+    }
+
+    // Para capas subordinadas (Stack, Global), filtrar reglas que colisionen con superficies ya gobernadas
+    const isSurfaceMasked = (surface?: string) => {
+      if (!surface || surface === 'src/' || surface === 'general') return false;
+      const norm = surface.trim().toLowerCase();
+      return governedSurfaces.some(
+        (gov) => gov === norm || norm.startsWith(gov) || gov.startsWith(norm)
+      );
+    };
+
+    const filteredInvariants = pb.invariants.filter((r) => !isSurfaceMasked(r.surface));
+    const filteredAsks = pb.askRules.filter((r) => !isSurfaceMasked(r.surface));
+    const filteredNevers = pb.neverRules ? pb.neverRules.filter((r) => !isSurfaceMasked(r.surface)) : undefined;
+
+    // Registrar superficies de este stack para enmascarar capas aún más bajas (Global)
+    for (const r of [...filteredInvariants, ...filteredAsks, ...(filteredNevers || [])]) {
+      if (r.surface && r.surface !== 'src/' && r.surface !== 'general') {
+        governedSurfaces.push(r.surface.trim().toLowerCase());
+      }
+    }
+
+    result.push({
+      ...pb,
+      invariants: filteredInvariants,
+      askRules: filteredAsks,
+      neverRules: filteredNevers && filteredNevers.length > 0 ? filteredNevers : undefined,
+    });
+  }
+
+  return result;
+}

@@ -13,6 +13,8 @@ export interface ProjectFlags {
   };
 }
 
+const MAX_MANIFEST_SIZE_BYTES = 2 * 1024 * 1024; // 2 MB guard against DoS
+
 /**
  * Normaliza una bandera tecnológica para matching consistente.
  */
@@ -29,6 +31,22 @@ export function normalizeFlag(flag: string): string {
 }
 
 /**
+ * Confinar una ruta relativa dentro del proyecto para neutralizar Path Traversal.
+ * Devuelve la ruta resuelta absoluta si está confinada, o null si escapa.
+ */
+export function resolveSafeProjectPath(projectPath: string, relPath: string): string | null {
+  if (!relPath || typeof relPath !== 'string') return null;
+  const canonicalRoot = path.resolve(projectPath);
+  const resolved = path.resolve(canonicalRoot, relPath);
+
+  // Asegurar que comience con la ruta del proyecto seguido del separador o sea idéntico
+  if (resolved === canonicalRoot || resolved.startsWith(canonicalRoot + path.sep)) {
+    return resolved;
+  }
+  return null;
+}
+
+/**
  * Escanea un proyecto y detecta el conjunto de banderas tecnológicas (lenguajes, frameworks, herramientas).
  */
 export async function detectProjectFlags(
@@ -38,8 +56,10 @@ export async function detectProjectFlags(
   const flags = new Set<string>();
 
   const fileExists = async (relPath: string): Promise<boolean> => {
+    const safePath = resolveSafeProjectPath(projectPath, relPath);
+    if (!safePath) return false;
     try {
-      await fs.access(path.join(projectPath, relPath));
+      await fs.access(safePath);
       return true;
     } catch {
       return false;
@@ -47,8 +67,12 @@ export async function detectProjectFlags(
   };
 
   const readFileSafe = async (relPath: string): Promise<string | null> => {
+    const safePath = resolveSafeProjectPath(projectPath, relPath);
+    if (!safePath) return null;
     try {
-      return await fs.readFile(path.join(projectPath, relPath), 'utf-8');
+      const stats = await fs.stat(safePath);
+      if (stats.size > MAX_MANIFEST_SIZE_BYTES) return null;
+      return await fs.readFile(safePath, 'utf-8');
     } catch {
       return null;
     }
@@ -192,9 +216,12 @@ export async function isStackActive(
   // Si tiene reglas adicionales de archivo personalizadas, verificarlas
   if (stack.detection?.files && projectPath) {
     for (const fRule of stack.detection.files) {
-      const fullPath = path.join(projectPath, fRule.path);
+      const safePath = resolveSafeProjectPath(projectPath, fRule.path);
+      if (!safePath) return false;
       try {
-        const content = await fs.readFile(fullPath, 'utf-8');
+        const stats = await fs.stat(safePath);
+        if (stats.size > MAX_MANIFEST_SIZE_BYTES) return false;
+        const content = await fs.readFile(safePath, 'utf-8');
         if (fRule.contains && fRule.contains.length > 0) {
           const allFound = fRule.contains.every((substr) => content.includes(substr));
           if (!allFound) return false;

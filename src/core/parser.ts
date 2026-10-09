@@ -317,16 +317,22 @@ export function serializePlaybook(playbook: Playbook): string {
 
   // 1. Metadata Header / Frontmatter
   if (playbook.scope === 'stack' || playbook.stackId) {
+    const safeStackId = sanitizeMetadataValue(playbook.stackId || playbook.language);
+    const safeStackName = playbook.stackName ? sanitizeMetadataValue(playbook.stackName) : undefined;
+    const safeFlags = playbook.requiredFlags
+      ? playbook.requiredFlags.map((f) => sanitizeMetadataValue(f, 40)).filter(Boolean)
+      : [];
+
     parts.push('---');
-    parts.push(`stack: ${playbook.stackId || playbook.language}`);
-    if (playbook.stackName) parts.push(`name: ${playbook.stackName}`);
-    if (playbook.requiredFlags && playbook.requiredFlags.length > 0) {
-      parts.push(`required_flags: [${playbook.requiredFlags.join(', ')}]`);
+    parts.push(`stack: ${safeStackId}`);
+    if (safeStackName) parts.push(`name: ${safeStackName}`);
+    if (safeFlags.length > 0) {
+      parts.push(`required_flags: [${safeFlags.join(', ')}]`);
     }
     parts.push('scope: stack');
     parts.push('---');
-    parts.push(`<!-- gentle-playbook:v${playbook.version} stack=${playbook.stackId || playbook.language} updated=${playbook.updatedAt} -->`);
-    parts.push(`# Playbook: Stack ${playbook.stackName || playbook.stackId || capitalize(playbook.language)}`);
+    parts.push(`<!-- gentle-playbook:v${playbook.version} stack=${safeStackId} updated=${playbook.updatedAt} -->`);
+    parts.push(`# Playbook: Stack ${safeStackName || safeStackId || capitalize(playbook.language)}`);
   } else if (playbook.scope === 'project' || playbook.language === 'project') {
     parts.push('---');
     parts.push('scope: project');
@@ -345,9 +351,10 @@ export function serializePlaybook(playbook: Playbook): string {
 
   // 2. Topology
   if (playbook.language !== AGENTS_PREFERENCES_ID || playbook.topology.directories.length > 0) {
-    parts.push(`## Topology: ${playbook.topology.pattern}`);
+    const safePattern = sanitizeMetadataValue(playbook.topology.pattern) || 'Standard';
+    parts.push(`## Topology: ${safePattern}`);
     for (const dir of playbook.topology.directories) {
-      parts.push(`- \`${dir}\``);
+      parts.push(`- \`${sanitizeMetadataValue(dir)}\``);
     }
     parts.push('');
   }
@@ -514,8 +521,8 @@ export function formatPlaybookForDisplay(
   return parts.join('\n');
 }
 
-import { escapeXml, detectPromptInjection, sanitizeRuleText, filterPlaybookRules } from './security.js';
-export { escapeXml, detectPromptInjection, sanitizeRuleText, filterPlaybookRules };
+import { escapeXml, detectPromptInjection, sanitizeRuleText, filterPlaybookRules, sanitizeMetadataValue } from './security.js';
+export { escapeXml, detectPromptInjection, sanitizeRuleText, filterPlaybookRules, sanitizeMetadataValue };
 
 function matchSurfaceFilter(surface: string, ruleText?: string, surfaceFilter?: string): boolean {
   if (!surfaceFilter) return true;

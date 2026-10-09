@@ -17,7 +17,8 @@ export const INJECTION_PATTERNS: Record<string, RegExp[]> = {
     /\bthe (above|previous|earlier) (was|were|is|are) (a )?(test|mistake|fake|wrong|just)\b/i,
     /\binstead,? (do|say|output|print|write|respond|reply)\b/i,
     // Multilingual overrides (ES, PT, FR, DE)
-    /(?:^|[\s.,;:!?])(?:olvid[aá]|ignor[aá]|desestim[aá]|omit[eé])\s+(?:todas?\s+)?(?:las?\s+)?instrucciones(?:\s+(?:anteriores|previas|de\s+sistema))?/iu,
+    /(?:^|[\s.,;:!?])(?:olvid[aá]|ignor[aá]|desestim[aá]|omit[eé])\s+(?:todas?\s+)?(?:tus\s+|las?\s+)?instrucciones(?:\s+(?:anteriores|previas|de\s+sistema))?/iu,
+    /(?:^|[\s.,;:!?])(?:apaga[r]?|desactiva[r]?|anula[r]?)\s+(?:todas?\s+)?(?:las?\s+)?reglas\s+(?:del?\s+)?(?:playbook|sistema)/iu,
     /(?:^|[\s.,;:!?])olv[ií]date\s+de\s+todo/iu,
     /(?:^|[\s.,;:!?])(?:nuevo\s+prompt\s+de\s+sistema|nuevas\s+instrucciones\s+de\s+sistema)/iu,
     /(?:^|[\s.,;:!?])(?:ignore|esque[cç]a|desconsidere)\s+(?:(?:todas\s+as|as)\s+)?instru[cç][oõ]es(?:\s+(?:anteriores|pr[eé]vias))?/iu,

@@ -22,6 +22,7 @@ import {
   findCollidingRules,
   checkAndResolveMultiStackConflicts,
   getActiveWorkspacePlaybooks,
+  maskSubordinatePlaybooks,
 } from './core/stack-handler.js';
 import { detectActiveStacks } from './core/stack-detector.js';
 import { heuristicFallbackStack } from './core/stack-synthesizer.js';
@@ -1207,7 +1208,8 @@ export default function (pi: ExtensionAPI) {
       }
 
       const cwd = ctx?.cwd || process.cwd();
-      const playbooksToCheck = await getActiveWorkspacePlaybooks(cwd, storage);
+      const rawPlaybooks = await getActiveWorkspacePlaybooks(cwd, storage);
+      const playbooksToCheck = maskSubordinatePlaybooks(rawPlaybooks);
 
       if (playbooksToCheck.length === 0) return { action: 'continue' };
 
@@ -1329,7 +1331,8 @@ export default function (pi: ExtensionAPI) {
       if (!targetPath.trim()) return undefined;
 
       const cwd = ctx?.cwd || process.cwd();
-      const playbooksToCheck = await getActiveWorkspacePlaybooks(cwd, storage);
+      const rawPlaybooks = await getActiveWorkspacePlaybooks(cwd, storage);
+      const playbooksToCheck = maskSubordinatePlaybooks(rawPlaybooks);
       const agentPrefs = await storage.getAgentPreferences();
 
       if (playbooksToCheck.length === 0) return undefined;
