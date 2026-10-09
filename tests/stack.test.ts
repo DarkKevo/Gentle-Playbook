@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
@@ -15,6 +15,8 @@ import {
 import {
   handleStackCommand,
   findCollidingRules,
+  checkAndResolveMultiStackConflicts,
+  getActiveWorkspacePlaybooks,
 } from '../src/core/stack-handler.js';
 import { PlaybookStorage } from '../src/core/storage.js';
 import { Playbook } from '../src/core/schema.js';
@@ -354,6 +356,147 @@ describe('Stack Detector & Synthesizer', () => {
       expect(await storage.hasStack('delete-me')).toBe(true);
       await handleStackCommand('delete delete-me', mockCtx, storage, mockPi);
       expect(await storage.hasStack('delete-me')).toBe(false);
+    });
+  });
+
+  describe('getActiveWorkspacePlaybooks & MultiStack Conflict Resolution', () => {
+    let storage: PlaybookStorage;
+
+    beforeEach(() => {
+      storage = new PlaybookStorage(tempDir);
+    });
+
+    it('should order playbooks according to authority hierarchy: Local > Stack > Global > Agent', async () => {
+      // 1. Local
+      await storage.saveLocalProjectPlaybook({
+        language: 'project',
+        scope: 'project',
+        version: 1,
+        updatedAt: '2026-10-08',
+        topology: { pattern: 'Custom', directories: [] },
+        invariants: [],
+        askRules: [],
+        snippets: [],
+      }, tempDir);
+
+      // 2. Stack (simular proyecto Go + Gin)
+      await fs.writeFile(path.join(tempDir, 'go.mod'), 'module example\nrequire github.com/gin-gonic/gin v1.9.0\n', 'utf-8');
+      await storage.saveStack({
+        language: 'go-gin',
+        stackId: 'go-gin',
+        requiredFlags: ['go', 'gin'],
+        scope: 'stack',
+        version: 1,
+        updatedAt: '2026-10-08',
+        topology: { pattern: 'Standard', directories: [] },
+        invariants: [],
+        askRules: [],
+        snippets: [],
+      });
+
+      // 3. Global
+      await storage.savePlaybook({
+        language: 'go',
+        version: 1,
+        updatedAt: '2026-10-08',
+        topology: { pattern: 'Standard', directories: [] },
+        invariants: [],
+        askRules: [],
+        snippets: [],
+      });
+
+      // 4. Agent
+      await storage.saveAgentPreferences({
+        language: 'agents-preferences',
+        version: 1,
+        updatedAt: '2026-10-08',
+        topology: { pattern: 'Runtime', directories: [] },
+        invariants: [],
+        askRules: [],
+        snippets: [],
+      });
+
+      const pbs = await getActiveWorkspacePlaybooks(tempDir, storage);
+      expect(pbs.length).toBe(4);
+      expect(pbs[0].scope).toBe('project'); // Local supreme
+      expect(pbs[1].stackId).toBe('go-gin'); // Stack second
+      expect(pbs[2].language).toBe('go'); // Global third
+      expect(pbs[3].language).toBe('agents-preferences'); // Agent governance
+    });
+
+    it('should resolve collision between 2 stacks and persist winner to local playbook.md', async () => {
+      const stackA: Playbook = {
+        language: 'stack-a',
+        stackId: 'stack-a',
+        requiredFlags: ['go'],
+        scope: 'stack',
+        version: 1,
+        updatedAt: '2026-10-08',
+        topology: { pattern: 'Standard', directories: [] },
+        invariants: [
+          {
+            id: 'json-format',
+            type: 'invariant',
+            title: 'Usar camelCase en JSON',
+            surface: 'internal/api',
+            description: 'Las respuestas HTTP deben serializarse en camelCase.',
+          },
+        ],
+        askRules: [],
+        snippets: [],
+      };
+
+      const stackB: Playbook = {
+        language: 'stack-b',
+        stackId: 'stack-b',
+        requiredFlags: ['go'],
+        scope: 'stack',
+        version: 1,
+        updatedAt: '2026-10-08',
+        topology: { pattern: 'Standard', directories: [] },
+        invariants: [
+          {
+            id: 'json-format-snake',
+            type: 'invariant',
+            title: 'Usar snake_case en JSON',
+            surface: 'internal/api',
+            description: 'Las respuestas HTTP deben serializarse en snake_case.',
+          },
+        ],
+        askRules: [],
+        snippets: [],
+      };
+
+      const mockCtx = {
+        ui: {
+          select: async () => '1. Adoptar regla de [stack-a]',
+          notify: vi.fn(),
+        },
+      };
+
+      const mockPi = {
+        sendMessage: vi.fn(),
+      };
+
+      expect(await storage.hasLocalProjectPlaybook(tempDir)).toBe(false);
+
+      await checkAndResolveMultiStackConflicts(tempDir, [stackA, stackB], storage, mockCtx, mockPi);
+
+      // Debe haberse creado el playbook.md local con la regla de stack-a
+      expect(await storage.hasLocalProjectPlaybook(tempDir)).toBe(true);
+      const localPb = await storage.getLocalProjectPlaybook(tempDir);
+      expect(localPb?.invariants.some((i) => i.id === 'json-format')).toBe(true);
+
+      // Si se vuelve a ejecutar, no debe consultar de nuevo (ya zanjado)
+      const selectSpy = vi.fn();
+      await checkAndResolveMultiStackConflicts(
+        tempDir,
+        [stackA, stackB],
+        storage,
+        { ui: { select: selectSpy } },
+        mockPi
+      );
+      expect(selectSpy).not.toHaveBeenCalled();
     });
   });
 });

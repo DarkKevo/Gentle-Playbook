@@ -17,7 +17,12 @@ import {
   PromptEvaluationResult,
 } from './core/checker.js';
 import { getLanguageMenuLabels, resolveLanguage } from './core/languages.js';
-import { handleStackCommand, findCollidingRules } from './core/stack-handler.js';
+import {
+  handleStackCommand,
+  findCollidingRules,
+  checkAndResolveMultiStackConflicts,
+  getActiveWorkspacePlaybooks,
+} from './core/stack-handler.js';
 import { detectActiveStacks } from './core/stack-detector.js';
 import { heuristicFallbackStack } from './core/stack-synthesizer.js';
 import { runExtractTriage } from './core/extract-triage.js';
@@ -1009,6 +1014,9 @@ export default function (pi: ExtensionAPI) {
 
   // 3. Auto-detection on session_start
   pi.on('session_start', async (_event: any, ctx: any) => {
+    const cwd = ctx.cwd || process.cwd();
+
+    // Preferencias de Agente
     if (await storage.hasAgentPreferences()) {
       ctx.ui?.notify(
         '[gentle-playbook] Agent Preferences active (Supervision & Governance available via playbook_consult tool)',
@@ -1016,9 +1024,34 @@ export default function (pi: ExtensionAPI) {
       );
     }
 
-    const cwd = ctx.cwd || process.cwd();
-    const detectedLang = await detectProjectLanguage(cwd);
+    // Playbook Local del Proyecto (playbook.md)
+    if (await storage.hasLocalProjectPlaybook(cwd)) {
+      ctx.ui?.notify(
+        '[gentle-playbook] Local Project Playbook active (playbook.md en la raíz del repositorio)',
+        'info'
+      );
+    }
 
+    // Stacks Tecnológicos activos y arbitraje de conflictos
+    const allStackSlugs = await storage.listStacks();
+    const allStackPbs: Playbook[] = [];
+    for (const slug of allStackSlugs) {
+      const s = await storage.getStack(slug);
+      if (s) allStackPbs.push(s);
+    }
+    const activeStacks = await detectActiveStacks(cwd, allStackPbs);
+    if (activeStacks.length > 0) {
+      const names = activeStacks.map((s) => s.stackName || s.stackId).join(', ');
+      ctx.ui?.notify(`[gentle-playbook] Active Stack(s): ${names}`, 'info');
+
+      // Si hay 2 o más stacks activos, chequear colisiones y aterrizar en local
+      if (activeStacks.length >= 2) {
+        await checkAndResolveMultiStackConflicts(cwd, activeStacks, storage, ctx, pi);
+      }
+    }
+
+    // Lenguaje base detectado
+    const detectedLang = await detectProjectLanguage(cwd);
     if (detectedLang && detectedLang !== 'generic') {
       const exists = await storage.exists(detectedLang);
       if (exists) {
@@ -1033,12 +1066,9 @@ export default function (pi: ExtensionAPI) {
   // 4. Light runtime directive via before_agent_start (Eje 4: Puntero ligero on-demand)
   pi.on('before_agent_start', async (event: any, ctx: any) => {
     const cwd = ctx?.cwd || process.cwd();
-    const detectedLang = await detectProjectLanguage(cwd);
-    const hasLangPlaybook =
-      detectedLang && detectedLang !== 'generic' && (await storage.exists(detectedLang));
-    const hasAgentPrefs = await storage.hasAgentPreferences();
+    const activePbs = await getActiveWorkspacePlaybooks(cwd, storage);
 
-    if (!hasLangPlaybook && !hasAgentPrefs) return;
+    if (activePbs.length === 0) return;
 
     if (!event.systemPromptOptions) {
       event.systemPromptOptions = { sections: {} };
@@ -1048,8 +1078,17 @@ export default function (pi: ExtensionAPI) {
     }
 
     const targets: string[] = [];
-    if (hasLangPlaybook) targets.push(`playbook de ${detectedLang.toUpperCase()}`);
-    if (hasAgentPrefs) targets.push('preferencias de gobernanza de agente');
+    for (const pb of activePbs) {
+      if (pb.scope === 'project' || pb.language === 'project') {
+        targets.push('playbook local (playbook.md)');
+      } else if (pb.scope === 'stack' || pb.stackId) {
+        targets.push(`stack ${pb.stackName || pb.stackId}`);
+      } else if (pb.language === AGENTS_PREFERENCES_ID) {
+        targets.push('preferencias de gobernanza de agente');
+      } else {
+        targets.push(`playbook de ${pb.language.toUpperCase()}`);
+      }
+    }
 
     event.systemPromptOptions.sections.playbook_guidance =
       `[gentle-playbook] Este workspace cuenta con normas activas (${targets.join(', ')}). ` +
@@ -1094,6 +1133,20 @@ export default function (pi: ExtensionAPI) {
           } else {
             results.push('No agent supervision preferences found in storage.');
           }
+        } else if (targetLang === 'project' || targetLang === 'local') {
+          const localPb = await storage.getLocalProjectPlaybook(cwd);
+          if (localPb) {
+            results.push(formatPlaybookForTool(localPb, surfaceFilter));
+          } else {
+            results.push('No local project playbook (playbook.md) found in this repository.');
+          }
+        } else if (targetLang && (await storage.hasStack(targetLang))) {
+          const stackPb = await storage.getStack(targetLang);
+          if (stackPb) {
+            results.push(formatPlaybookForTool(stackPb, surfaceFilter));
+          } else {
+            results.push(`No stack playbook found for '${targetLang}'.`);
+          }
         } else if (targetLang) {
           const resolved = resolveLanguage(targetLang);
           const pb = await storage.getPlaybook(resolved);
@@ -1103,30 +1156,31 @@ export default function (pi: ExtensionAPI) {
             results.push(`No playbook found for language '${targetLang}'.`);
           }
         } else {
-          // Auto-detect project language and include agent preferences if present
-          const detected = await detectProjectLanguage(cwd);
-          let foundAny = false;
+          // Jerarquía completa del workspace (Local > Stack > Global > Agente)
+          const playbooks = await getActiveWorkspacePlaybooks(cwd, storage);
+          for (const pb of playbooks) {
+            let header = '';
+            if (pb.scope === 'project' || pb.language === 'project') {
+              header = '### 🏠 [LOCAL PROJECT PLAYBOOK: playbook.md]';
+            } else if (pb.scope === 'stack' || pb.stackId) {
+              header = `### 📦 [STACK PLAYBOOK: ${pb.stackName || pb.stackId}]`;
+            } else if (pb.language === AGENTS_PREFERENCES_ID) {
+              header = '### 🤖 [AGENT SUPERVISION PREFERENCES]';
+            } else {
+              header = `### 🌐 [GLOBAL PLAYBOOK: ${pb.language.toUpperCase()}]`;
+            }
 
-          if (detected && detected !== 'generic') {
-            const pb = await storage.getPlaybook(detected);
-            if (pb) {
-              results.push(formatPlaybookForTool(pb, surfaceFilter));
-              foundAny = true;
+            const formatted =
+              pb.language === AGENTS_PREFERENCES_ID
+                ? formatAgentPreferencesForTool(pb, surfaceFilter)
+                : formatPlaybookForTool(pb, surfaceFilter);
+
+            if (formatted && !formatted.includes('No se encontraron reglas')) {
+              results.push(`${header}\n\n${formatted}`);
             }
           }
 
-          const agentPrefs = await storage.getAgentPreferences();
-          if (
-            agentPrefs &&
-            (agentPrefs.invariants.length > 0 ||
-              agentPrefs.askRules.length > 0 ||
-              (agentPrefs.neverRules && agentPrefs.neverRules.length > 0))
-          ) {
-            results.push(formatAgentPreferencesForTool(agentPrefs, surfaceFilter));
-            foundAny = true;
-          }
-
-          if (!foundAny) {
+          if (results.length === 0) {
             results.push('No playbook found for the current workspace and no agent preferences configured.');
           }
         }
@@ -1153,29 +1207,7 @@ export default function (pi: ExtensionAPI) {
       }
 
       const cwd = ctx?.cwd || process.cwd();
-      const detectedLang = await detectProjectLanguage(cwd);
-      const playbooksToCheck: Playbook[] = [];
-
-      if (detectedLang && detectedLang !== 'generic') {
-        const activePb = await storage.getPlaybook(detectedLang);
-        if (activePb) playbooksToCheck.push(activePb);
-      }
-
-      // Soporte para monorepos / stacks combinados: evaluar playbooks instalados
-      if (typeof (storage as any).listLanguages === 'function') {
-        const allLangs = await (storage as any).listLanguages();
-        for (const lang of allLangs) {
-          if (lang !== AGENTS_PREFERENCES_ID && lang !== detectedLang) {
-            const extraPb = await storage.getPlaybook(lang);
-            if (extraPb && !playbooksToCheck.some((p) => p.language === extraPb.language)) {
-              playbooksToCheck.push(extraPb);
-            }
-          }
-        }
-      }
-
-      const agentPrefs = await storage.getAgentPreferences();
-      if (agentPrefs) playbooksToCheck.push(agentPrefs);
+      const playbooksToCheck = await getActiveWorkspacePlaybooks(cwd, storage);
 
       if (playbooksToCheck.length === 0) return { action: 'continue' };
 
@@ -1297,29 +1329,8 @@ export default function (pi: ExtensionAPI) {
       if (!targetPath.trim()) return undefined;
 
       const cwd = ctx?.cwd || process.cwd();
-      const detectedLang = await detectProjectLanguage(cwd);
-      const playbooksToCheck: Playbook[] = [];
-
-      if (detectedLang && detectedLang !== 'generic') {
-        const activePb = await storage.getPlaybook(detectedLang);
-        if (activePb) playbooksToCheck.push(activePb);
-      }
-
-      // En monorepos, verificar si el archivo por su extensión/ruta corresponde a otro playbook instalado
-      if (typeof (storage as any).listLanguages === 'function') {
-        const allLangsTool = await (storage as any).listLanguages();
-        for (const lang of allLangsTool) {
-          if (lang !== AGENTS_PREFERENCES_ID && lang !== detectedLang) {
-            const extraPb = await storage.getPlaybook(lang);
-            if (extraPb && !playbooksToCheck.some((p) => p.language === extraPb.language)) {
-              playbooksToCheck.push(extraPb);
-            }
-          }
-        }
-      }
-
+      const playbooksToCheck = await getActiveWorkspacePlaybooks(cwd, storage);
       const agentPrefs = await storage.getAgentPreferences();
-      if (agentPrefs) playbooksToCheck.push(agentPrefs);
 
       if (playbooksToCheck.length === 0) return undefined;
 

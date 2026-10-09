@@ -7,6 +7,9 @@ import {
   SynthesizedStack,
 } from './stack-synthesizer.js';
 import { formatPlaybookForDisplay } from './parser.js';
+import { detectActiveStacks } from './stack-detector.js';
+import { detectProjectLanguage } from '../extract/extractor.js';
+import { upsertRuleInPlaybook } from './extract-triage.js';
 
 export interface CollidingRuleInfo {
   scopeLabel: string;
@@ -259,4 +262,195 @@ export async function handleStackCommand(
     content: `### 📦 Nuevo Stack Tecnológico Registrado\n\n${preview}`,
     display: true,
   });
+}
+
+/**
+ * Detecta y resuelve proactivamente contradicciones o colisiones entre stacks activos,
+ * aterrizando la decisión del usuario en el playbook.md local como autoridad suprema.
+ */
+export async function checkAndResolveMultiStackConflicts(
+  cwd: string,
+  activeStacks: Playbook[],
+  storage: PlaybookStorage,
+  ctx: any,
+  pi: any
+): Promise<void> {
+  if (activeStacks.length < 2) return;
+
+  const localPb = await storage.getLocalProjectPlaybook(cwd);
+
+  for (let i = 0; i < activeStacks.length; i++) {
+    for (let j = i + 1; j < activeStacks.length; j++) {
+      const sA = activeStacks[i];
+      const sB = activeStacks[j];
+
+      const allRulesA = [
+        ...(sA.invariants || []),
+        ...(sA.askRules || []),
+        ...(sA.neverRules || []),
+      ];
+
+      for (const rA of allRulesA) {
+        if (!rA.surface || rA.surface === 'src/' || rA.surface === 'general') continue;
+
+        // Si el playbook local ya tiene una regla que gobierna esta superficie, ya está zanjado
+        if (localPb) {
+          const localHasSurface = [
+            ...(localPb.invariants || []),
+            ...(localPb.askRules || []),
+            ...(localPb.neverRules || []),
+          ].some(
+            (lr) =>
+              lr.surface &&
+              (lr.surface === rA.surface ||
+                lr.surface.startsWith(rA.surface) ||
+                rA.surface.startsWith(lr.surface))
+          );
+          if (localHasSurface) continue;
+        }
+
+        // Buscar colisión en sB
+        const collisions = findCollidingRules(rA, [
+          { scopeLabel: sB.stackName || sB.stackId || 'Stack B', playbook: sB },
+        ]);
+
+        if (collisions.length > 0) {
+          const col = collisions[0];
+          const rB = col.rule;
+
+          const conflictCard =
+            `⚠️ Conflicto detectado entre Stack [${sA.stackId}] y Stack [${sB.stackId}] en superficie \`${rA.surface}\`:\n\n` +
+            `[STACK: ${sA.stackId}] ${rA.title}\n` +
+            `- Tipo: ${rA.type.toUpperCase()}\n` +
+            `- Regla: ${rA.description}\n\n` +
+            `VS\n\n` +
+            `[STACK: ${sB.stackId}] ${rB.title}\n` +
+            `- Tipo: ${rB.type.toUpperCase()}\n` +
+            `- Regla: ${rB.description}\n\n` +
+            `*La opción que elijas se aterrizará como autoridad en el playbook.md local del repositorio.*`;
+
+          pi?.sendMessage?.({
+            customType: 'gentle-playbook-stack-conflict',
+            content: `### ⚔️ Conflicto entre Stacks Activos\n\n${conflictCard}`,
+            display: true,
+          });
+
+          if (ctx.ui?.select) {
+            const choice = await ctx.ui.select(
+              `Conflicto en superficie \`${rA.surface}\`: ¿Cuál regla deseas aterrizar en playbook.md?`,
+              [
+                `1. Adoptar regla de [${sA.stackId}]`,
+                `2. Adoptar regla de [${sB.stackId}]`,
+                `3. Redactar una regla personalizada para este proyecto`,
+              ]
+            );
+
+            if (!choice) continue;
+
+            let targetLocal = await storage.getLocalProjectPlaybook(cwd);
+            if (!targetLocal) {
+              targetLocal = {
+                language: 'project',
+                scope: 'project',
+                version: 1,
+                updatedAt: new Date().toISOString().split('T')[0],
+                topology: { pattern: 'Project Custom Layout', directories: ['src/'] },
+                invariants: [],
+                askRules: [],
+                snippets: [],
+              };
+            }
+
+            if (choice.includes(`[${sA.stackId}]`)) {
+              upsertRuleInPlaybook(targetLocal, rA);
+            } else if (choice.includes(`[${sB.stackId}]`)) {
+              upsertRuleInPlaybook(targetLocal, rB);
+            } else if (choice.includes('Redactar') && ctx.ui?.input) {
+              const customDesc = await ctx.ui.input(
+                `Escribe la norma arquitectónica local para \`${rA.surface}\`:`,
+                rA.description
+              );
+              if (customDesc) {
+                upsertRuleInPlaybook(targetLocal, {
+                  id: `local-${rA.id}`,
+                  type: rA.type,
+                  title: `Norma local para ${rA.surface}`,
+                  surface: rA.surface,
+                  description: customDesc.trim(),
+                } as any);
+              }
+            }
+
+            targetLocal.version += 1;
+            targetLocal.updatedAt = new Date().toISOString().split('T')[0];
+            await storage.saveLocalProjectPlaybook(targetLocal, cwd);
+            ctx.ui?.notify(
+              `✓ Conflicto resuelto y persistido en playbook.md local del proyecto.`,
+              'info'
+            );
+          }
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Reúne todos los playbooks aplicables a un workspace respetando el orden jerárquico de autoridad:
+ * 1. LOCAL (playbook.md en raíz)
+ * 2. STACK (todos los stacks activos por sus banderas requeridas)
+ * 3. GLOBAL (lenguaje base detectado y otros lenguajes en monorepos)
+ * 4. AGENTE (preferencias de supervisión y gobernanza)
+ */
+export async function getActiveWorkspacePlaybooks(
+  cwd: string,
+  storage: PlaybookStorage
+): Promise<Playbook[]> {
+  const list: Playbook[] = [];
+
+  // 1. LOCAL (máxima autoridad)
+  const localPb = await storage.getLocalProjectPlaybook(cwd);
+  if (localPb) {
+    list.push(localPb);
+  }
+
+  // 2. STACK
+  const allStackSlugs = await storage.listStacks();
+  const allStackPbs: Playbook[] = [];
+  for (const slug of allStackSlugs) {
+    const s = await storage.getStack(slug);
+    if (s) allStackPbs.push(s);
+  }
+  const activeStacks = await detectActiveStacks(cwd, allStackPbs);
+  for (const s of activeStacks) {
+    list.push(s);
+  }
+
+  // 3. GLOBAL
+  const detectedLang = await detectProjectLanguage(cwd);
+  if (detectedLang && detectedLang !== 'generic') {
+    const globPb = await storage.getPlaybook(detectedLang);
+    if (globPb) list.push(globPb);
+  }
+
+  // Soporte monorepo para otros lenguajes instalados
+  if (typeof (storage as any).listLanguages === 'function') {
+    const allLangs = await (storage as any).listLanguages();
+    for (const lang of allLangs) {
+      if (lang !== 'agents-preferences' && lang !== detectedLang) {
+        const extraPb = await storage.getPlaybook(lang);
+        if (extraPb && !list.some((p) => p.language === extraPb.language)) {
+          list.push(extraPb);
+        }
+      }
+    }
+  }
+
+  // 4. AGENTE
+  const agentPrefs = await storage.getAgentPreferences();
+  if (agentPrefs) {
+    list.push(agentPrefs);
+  }
+
+  return list;
 }
