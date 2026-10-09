@@ -17,6 +17,9 @@ import {
   PromptEvaluationResult,
 } from './core/checker.js';
 import { getLanguageMenuLabels, resolveLanguage } from './core/languages.js';
+import { handleStackCommand, findCollidingRules } from './core/stack-handler.js';
+import { detectActiveStacks } from './core/stack-detector.js';
+import { heuristicFallbackStack } from './core/stack-synthesizer.js';
 
 export interface ExtensionAPI {
   registerCommand(
@@ -44,37 +47,101 @@ async function handleAddRule(
     targetLang = undefined;
   }
 
-  // 1. Pregunta 1: ¿Qué tipo de regla es (Agente vs Lenguaje)?
+  type TargetScope = 'agents' | 'project' | 'stack' | 'global';
+  let targetScope: TargetScope = 'global';
+  let targetIdentifier: string = 'go';
+  let targetDisplayName = 'GO';
+
+  // 1. Pregunta 1: ¿Dónde deseas registrar esta regla? (4 ámbitos)
   if (!targetLang) {
     if (ctx.ui?.select) {
       const categoryChoice = await ctx.ui.select(
-        '¿Qué tipo de regla deseas registrar?',
+        '¿Dónde deseas registrar esta regla?',
         [
           '🤖 Preferencias de Agente (Supervisión y Gobernanza de IA)',
-          '💻 Regla de Arquitectura de Lenguaje (Go, TypeScript, etc.)',
+          '🏠 Proyecto Local (playbook.md en la raíz de este repositorio)',
+          '📦 Stack Tecnológico (combinación de tecnologías/frameworks)',
+          '🌐 Lenguaje Global (Go, TypeScript, etc.)',
         ]
       );
       if (!categoryChoice) return;
 
       if (categoryChoice.includes('Agente')) {
-        targetLang = AGENTS_PREFERENCES_ID;
+        targetScope = 'agents';
+        targetIdentifier = AGENTS_PREFERENCES_ID;
+        targetDisplayName = 'Agents Preferences';
+      } else if (categoryChoice.includes('Proyecto Local')) {
+        targetScope = 'project';
+        targetIdentifier = 'project';
+        targetDisplayName = 'Proyecto Local (playbook.md)';
+      } else if (categoryChoice.includes('Stack')) {
+        targetScope = 'stack';
+        const stacks = await storage.listStacks();
+        if (stacks.length === 0) {
+          const newStackPrompt = ctx.ui?.input
+            ? await ctx.ui.input(
+                'No hay stacks registrados. Escribe el stack a crear (ej: "go-gin" o "nest con typeorm"):',
+                'go-gin'
+              )
+            : 'custom-stack';
+          if (!newStackPrompt) return;
+          const synth = heuristicFallbackStack(newStackPrompt);
+          targetIdentifier = synth.slug;
+          targetDisplayName = `Stack [${synth.name}]`;
+        } else {
+          const stackOptions = [...stacks, '➕ Crear nuevo Stack...'];
+          const chosenStack = await ctx.ui.select('Selecciona el Stack para esta regla:', stackOptions);
+          if (!chosenStack) return;
+          if (chosenStack.includes('Crear')) {
+            const newStackPrompt = ctx.ui?.input
+              ? await ctx.ui.input('Escribe el nuevo stack a crear (ej: "go-gin"):', 'go-gin')
+              : 'custom-stack';
+            if (!newStackPrompt) return;
+            const synth = heuristicFallbackStack(newStackPrompt);
+            targetIdentifier = synth.slug;
+            targetDisplayName = `Stack [${synth.name}]`;
+          } else {
+            targetIdentifier = chosenStack;
+            targetDisplayName = `Stack [${chosenStack}]`;
+          }
+        }
       } else {
+        targetScope = 'global';
         const selected = await ctx.ui.select(
           '¿Para qué lenguaje es esta regla de arquitectura?',
           getLanguageMenuLabels()
         );
         if (!selected) return;
-        targetLang = resolveLanguage(selected);
+        targetIdentifier = resolveLanguage(selected);
+        targetDisplayName = targetIdentifier.toUpperCase();
       }
     } else {
-      targetLang = 'go';
+      targetScope = 'global';
+      targetIdentifier = 'go';
+      targetDisplayName = 'GO';
     }
   } else {
-    targetLang = resolveLanguage(targetLang);
+    const low = targetLang.toLowerCase();
+    if (low === AGENTS_PREFERENCES_ID || low === 'agents') {
+      targetScope = 'agents';
+      targetIdentifier = AGENTS_PREFERENCES_ID;
+      targetDisplayName = 'Agents Preferences';
+    } else if (low === 'project' || low === 'local') {
+      targetScope = 'project';
+      targetIdentifier = 'project';
+      targetDisplayName = 'Proyecto Local (playbook.md)';
+    } else if (low.startsWith('stack:') || (await storage.hasStack(low))) {
+      targetScope = 'stack';
+      targetIdentifier = low.replace('stack:', '');
+      targetDisplayName = `Stack [${targetIdentifier}]`;
+    } else {
+      targetScope = 'global';
+      targetIdentifier = resolveLanguage(targetLang);
+      targetDisplayName = targetIdentifier.toUpperCase();
+    }
   }
 
-  const isAgent = targetLang === AGENTS_PREFERENCES_ID;
-  const targetDisplayName = isAgent ? 'Agents Preferences' : targetLang.toUpperCase();
+  const isAgent = targetScope === 'agents';
 
   // 2. Pregunta 2: La regla como tal
   if (!ctx.ui?.input) {
@@ -196,10 +263,15 @@ async function handleAddRule(
 
   let synthesized: SynthesizedRule;
   try {
-    const prompt = buildSynthesisPrompt(targetLang, rawDescription.trim(), ruleType, {
-      prohibitionScope,
-      customScopeText,
-    });
+    const prompt = buildSynthesisPrompt(
+      isAgent ? AGENTS_PREFERENCES_ID : targetIdentifier,
+      rawDescription.trim(),
+      ruleType,
+      {
+        prohibitionScope,
+        customScopeText,
+      }
+    );
     let rawResponse = '';
 
     if (ctx.modelRegistry && ctx.model) {
@@ -227,11 +299,78 @@ async function handleAddRule(
         reason: 'Restricción obligatoria del usuario',
       };
     } else {
-      synthesized = parseSynthesizedRule(rawResponse, ruleType, targetLang);
+      synthesized = parseSynthesizedRule(rawResponse, ruleType, targetIdentifier);
     }
   } catch (err: any) {
     ctx.ui?.notify(`Error al sintetizar la regla: ${err.message}`, 'error');
     return;
+  }
+
+  // 4b. Chequeo de colisión entre capas activas
+  const candidateLayers: Array<{ scopeLabel: string; playbook: Playbook }> = [];
+  const cwd = ctx.cwd || process.cwd();
+
+  if (targetScope !== 'project') {
+    const localPb = await storage.getLocalProjectPlaybook(cwd);
+    if (localPb) candidateLayers.push({ scopeLabel: 'LOCAL (playbook.md)', playbook: localPb });
+  }
+
+  const allStackSlugs = await storage.listStacks();
+  const allStackPbs: Playbook[] = [];
+  for (const sSlug of allStackSlugs) {
+    const sPb = await storage.getStack(sSlug);
+    if (sPb) allStackPbs.push(sPb);
+  }
+  const activeStacks = await detectActiveStacks(cwd, allStackPbs);
+  for (const actStack of activeStacks) {
+    if (targetScope !== 'stack' || actStack.stackId !== targetIdentifier) {
+      candidateLayers.push({ scopeLabel: `STACK: ${actStack.stackId}`, playbook: actStack });
+    }
+  }
+
+  if (targetScope !== 'global') {
+    const detectedLang = await detectProjectLanguage(cwd);
+    if (detectedLang && detectedLang !== 'generic') {
+      const globPb = await storage.getPlaybook(detectedLang);
+      if (globPb) candidateLayers.push({ scopeLabel: `GLOBAL: ${detectedLang}`, playbook: globPb });
+    }
+  }
+
+  const collisions = findCollidingRules(synthesized, candidateLayers);
+  if (collisions.length > 0 && ctx.ui?.select) {
+    const c = collisions[0];
+    const collisionMsg =
+      `⚠️ Conflicto detectado con [${c.scopeLabel}]:\n\n` +
+      `[EXISTENTE en ${c.scopeLabel}]\n` +
+      `- Título: ${c.rule.title}\n` +
+      `- Surface: \`${c.rule.surface}\`\n` +
+      `- Descripción: ${c.rule.description}\n\n` +
+      `[NUEVA en ${targetDisplayName}]\n` +
+      `- Título: ${synthesized.title}\n` +
+      `- Surface: \`${synthesized.surface}\`\n` +
+      `- Descripción: ${synthesized.description}`;
+
+    const choice = await ctx.ui.select(
+      `Conflicto en superficie \`${synthesized.surface}\`:`,
+      [
+        `📥 1. Guardar en ${targetDisplayName} de todos modos (prevalece en este ámbito)`,
+        `🛡️ 2. Conservar la regla existente de ${c.scopeLabel} (descartar la nueva)`,
+        `✏️ 3. Modificar la regla a agregar (reformular)`,
+      ]
+    );
+
+    if (choice?.includes('Conservar')) {
+      ctx.ui?.notify(`Operación cancelada: Se conservó la regla existente de ${c.scopeLabel}.`, 'info');
+      return;
+    }
+    if (choice?.includes('Modificar') && ctx.ui?.input) {
+      const adjusted = await ctx.ui.input('Reformula la descripción de la regla:', synthesized.description);
+      if (!adjusted || !adjusted.trim()) {
+        ctx.ui?.notify('Operación cancelada.', 'info');
+        return;
+      }
+      synthesized.description = adjusted.trim();
+    }
   }
 
   // 5. Build Preview for User Confirmation
@@ -267,21 +406,67 @@ async function handleAddRule(
     return;
   }
 
-  // 6. Save to storage
-  let pb: Playbook | null = await storage.getPlaybook(targetLang);
-  if (!pb) {
-    pb = {
-      language: targetLang,
-      version: 1,
-      updatedAt: new Date().toISOString().split('T')[0],
-      topology: {
-        pattern: isAgent ? 'Agent Runtime' : 'Standard Layout',
-        directories: isAgent ? [] : ['src/'],
-      },
-      invariants: [],
-      askRules: [],
-      snippets: [],
-    };
+  // 6. Save to storage according to targetScope
+  let pb: Playbook | null = null;
+  if (targetScope === 'project') {
+    pb = await storage.getLocalProjectPlaybook(cwd);
+    if (!pb) {
+      pb = {
+        language: 'project',
+        scope: 'project',
+        version: 1,
+        updatedAt: new Date().toISOString().split('T')[0],
+        topology: { pattern: 'Project Custom Layout', directories: ['src/'] },
+        invariants: [],
+        askRules: [],
+        snippets: [],
+      };
+    }
+  } else if (targetScope === 'stack') {
+    pb = await storage.getStack(targetIdentifier);
+    if (!pb) {
+      pb = {
+        language: targetIdentifier,
+        stackId: targetIdentifier,
+        stackName: targetIdentifier.toUpperCase(),
+        requiredFlags: [targetIdentifier],
+        scope: 'stack',
+        version: 1,
+        updatedAt: new Date().toISOString().split('T')[0],
+        topology: { pattern: 'Standard Stack Layout', directories: ['src/'] },
+        invariants: [],
+        askRules: [],
+        snippets: [],
+      };
+    }
+  } else if (targetScope === 'agents') {
+    pb = await storage.getAgentPreferences();
+    if (!pb) {
+      pb = {
+        language: AGENTS_PREFERENCES_ID,
+        scope: 'agents',
+        version: 1,
+        updatedAt: new Date().toISOString().split('T')[0],
+        topology: { pattern: 'Agent Runtime', directories: [] },
+        invariants: [],
+        askRules: [],
+        snippets: [],
+      };
+    }
+  } else {
+    pb = await storage.getPlaybook(targetIdentifier);
+    if (!pb) {
+      pb = {
+        language: targetIdentifier,
+        scope: 'global',
+        version: 1,
+        updatedAt: new Date().toISOString().split('T')[0],
+        topology: { pattern: 'Standard Layout', directories: ['src/'] },
+        invariants: [],
+        askRules: [],
+        snippets: [],
+      };
+    }
   }
 
   if (synthesized.type === 'invariant') {
@@ -327,7 +512,16 @@ async function handleAddRule(
 
   pb.version += 1;
   pb.updatedAt = new Date().toISOString().split('T')[0];
-  await storage.savePlaybook(pb);
+
+  if (targetScope === 'project') {
+    await storage.saveLocalProjectPlaybook(pb, cwd);
+  } else if (targetScope === 'stack') {
+    await storage.saveStack(pb);
+  } else if (targetScope === 'agents') {
+    await storage.saveAgentPreferences(pb);
+  } else {
+    await storage.savePlaybook(pb);
+  }
 
   ctx.ui?.notify(`✓ Regla guardada con éxito en ${targetDisplayName}`, 'info');
 
@@ -350,6 +544,12 @@ export default function (pi: ExtensionAPI) {
       if (sub === 'add') {
         const remainingArgs = parts.slice(1).join(' ');
         await handleAddRule(remainingArgs, ctx, storage, pi);
+        return;
+      }
+
+      if (sub === 'stack') {
+        const remainingArgs = parts.slice(1).join(' ');
+        await handleStackCommand(remainingArgs, ctx, storage, pi);
         return;
       }
 
@@ -963,6 +1163,21 @@ export default function (pi: ExtensionAPI) {
     description: 'Add a new architectural invariant, ask rule, or agent preference interactively',
     handler: async (args: string, ctx: any) => {
       await handleAddRule(args, ctx, storage, pi);
+    },
+  });
+
+  // Dedicated Slash Command: /playbook-stack
+  pi.registerCommand('gentle-playbook-stack', {
+    description: 'Create, inspect, or manage technology stack playbooks',
+    handler: async (args: string, ctx: any) => {
+      await handleStackCommand(args, ctx, storage, pi);
+    },
+  });
+
+  pi.registerCommand('playbook-stack', {
+    description: 'Create, inspect, or manage technology stack playbooks (alias)',
+    handler: async (args: string, ctx: any) => {
+      await handleStackCommand(args, ctx, storage, pi);
     },
   });
 

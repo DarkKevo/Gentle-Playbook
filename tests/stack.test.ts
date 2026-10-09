@@ -12,6 +12,11 @@ import {
   parseSynthesizedStack,
   heuristicFallbackStack,
 } from '../src/core/stack-synthesizer.js';
+import {
+  handleStackCommand,
+  findCollidingRules,
+} from '../src/core/stack-handler.js';
+import { PlaybookStorage } from '../src/core/storage.js';
 import { Playbook } from '../src/core/schema.js';
 
 describe('Stack Detector & Synthesizer', () => {
@@ -229,6 +234,126 @@ describe('Stack Detector & Synthesizer', () => {
       expect(fallback.requiredFlags).toContain('go');
       expect(fallback.requiredFlags).toContain('gin');
       expect(fallback.requiredFlags).toContain('gorm');
+    });
+  });
+
+  describe('findCollidingRules', () => {
+    const existingPb: Playbook = {
+      language: 'go',
+      version: 1,
+      updatedAt: '2026-10-08',
+      topology: { pattern: 'Standard', directories: [] },
+      invariants: [
+        {
+          id: 'rule-auth',
+          type: 'invariant',
+          title: 'Regla de Auth',
+          surface: 'internal/auth',
+          description: 'Usar JWT para sesiones.',
+        },
+      ],
+      askRules: [],
+      snippets: [],
+    };
+
+    it('should detect collision on exact ID match across layers', () => {
+      const collisions = findCollidingRules(
+        { id: 'rule-auth', surface: 'pkg/other', title: 'Nueva regla', description: 'desc' },
+        [{ scopeLabel: 'GLOBAL: go', playbook: existingPb }]
+      );
+      expect(collisions.length).toBe(1);
+      expect(collisions[0].reason).toContain('ID idéntico');
+    });
+
+    it('should detect collision on overlapping surface', () => {
+      const collisions = findCollidingRules(
+        { id: 'other-id', surface: 'internal/auth/jwt', title: 'Nueva regla', description: 'desc' },
+        [{ scopeLabel: 'GLOBAL: go', playbook: existingPb }]
+      );
+      expect(collisions.length).toBe(1);
+      expect(collisions[0].reason).toContain('Superficie superpuesta');
+    });
+
+    it('should NOT report collision when surfaces are completely disjoint', () => {
+      const collisions = findCollidingRules(
+        { id: 'disjoint-id', surface: 'cmd/cli', title: 'CLI rule', description: 'desc' },
+        [{ scopeLabel: 'GLOBAL: go', playbook: existingPb }]
+      );
+      expect(collisions.length).toBe(0);
+    });
+  });
+
+  describe('handleStackCommand', () => {
+    let storage: PlaybookStorage;
+    let sentMessages: any[] = [];
+    let notified: any[] = [];
+
+    beforeEach(() => {
+      storage = new PlaybookStorage(tempDir);
+      sentMessages = [];
+      notified = [];
+    });
+
+    const mockCtx = {
+      ui: {
+        notify: (msg: string, type: string) => notified.push({ msg, type }),
+        confirm: async () => true,
+        select: async () => null,
+        input: async () => null,
+      },
+      cwd: tempDir,
+    };
+
+    const mockPi = {
+      sendMessage: (msg: any) => sentMessages.push(msg),
+    };
+
+    it('should list stacks and notify if empty', async () => {
+      await handleStackCommand('list', mockCtx, storage, mockPi);
+      expect(notified.some((n) => n.msg.includes('No hay stacks'))).toBe(true);
+
+      // Create one stack
+      await storage.saveStack({
+        language: 'go-gin',
+        stackId: 'go-gin',
+        stackName: 'Go + Gin',
+        requiredFlags: ['go', 'gin'],
+        version: 1,
+        updatedAt: '2026-10-08',
+        topology: { pattern: 'Standard', directories: [] },
+        invariants: [],
+        askRules: [],
+        snippets: [],
+      });
+
+      await handleStackCommand('list', mockCtx, storage, mockPi);
+      expect(sentMessages.length).toBe(1);
+      expect(sentMessages[0].content).toContain('Go + Gin');
+    });
+
+    it('should create stack with direct shorthand prompt', async () => {
+      await handleStackCommand('go con gin y gorm', mockCtx, storage, mockPi);
+      expect(await storage.hasStack('go-gin-gorm')).toBe(true);
+      const saved = await storage.getStack('go-gin-gorm');
+      expect(saved?.requiredFlags).toContain('go');
+      expect(saved?.requiredFlags).toContain('gin');
+    });
+
+    it('should delete existing stack', async () => {
+      await storage.saveStack({
+        language: 'delete-me',
+        stackId: 'delete-me',
+        version: 1,
+        updatedAt: '2026-10-08',
+        topology: { pattern: 'Standard', directories: [] },
+        invariants: [],
+        askRules: [],
+        snippets: [],
+      });
+
+      expect(await storage.hasStack('delete-me')).toBe(true);
+      await handleStackCommand('delete delete-me', mockCtx, storage, mockPi);
+      expect(await storage.hasStack('delete-me')).toBe(false);
     });
   });
 });
