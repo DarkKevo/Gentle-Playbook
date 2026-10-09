@@ -1,5 +1,6 @@
 import {
   Playbook,
+  PlaybookScope,
   Topology,
   InvariantRule,
   AskRule,
@@ -15,6 +16,10 @@ export function parsePlaybook(markdown: string): Playbook {
   let source: string | undefined;
   let projectType: string | undefined;
   let stack: string[] | undefined;
+  let scope: PlaybookScope | undefined;
+  let stackId: string | undefined;
+  let stackName: string | undefined;
+  let requiredFlags: string[] | undefined;
 
   // 1. Frontmatter parsing (YAML-like) or HTML comment
   const frontmatterMatch = markdown.match(/^---\r?\n([\s\S]*?)\r?\n---/);
@@ -29,17 +34,41 @@ export function parsePlaybook(markdown: string): Playbook {
       if (k === 'lang') language = v.toLowerCase();
       if (k === 'project_type' || k === 'projecttype') projectType = v;
       if (k === 'extracted' || k === 'updated') updatedAt = v;
+      if (k === 'scope') {
+        const s = v.toLowerCase();
+        if (s === 'global' || s === 'stack' || s === 'project' || s === 'agents') {
+          scope = s as PlaybookScope;
+        }
+      }
+      if (k === 'stack_id' || k === 'stackid') stackId = v.toLowerCase();
+      if (k === 'stack_name' || k === 'stackname' || k === 'name') stackName = v;
+      if (k === 'required_flags' || k === 'flags') {
+        const cleanVal = v.replace(/^\[|\]$/g, '');
+        requiredFlags = cleanVal.split(/[,;]/).map((s) => s.trim().toLowerCase()).filter(Boolean);
+      }
       if (k === 'stack') {
         stack = v.split(/[,;]/).map((s) => s.trim()).filter(Boolean);
+        if (!stackId && !v.includes(',') && !v.includes(';')) {
+          stackId = v.trim().toLowerCase();
+        }
       }
     }
   }
 
-  const headerMatch = markdown.match(/<!--\s*gentle-playbook:v(\d+)\s+lang=([^\s]+)\s+updated=([^\s]+)\s*-->/);
-  if (headerMatch) {
-    version = parseInt(headerMatch[1], 10);
-    language = headerMatch[2];
-    updatedAt = headerMatch[3];
+  const legacyHeaderMatch = markdown.match(/<!--\s*gentle-playbook:v(\d+)\s+lang=([^\s]+)\s+updated=([^\s]+)\s*-->/);
+  if (legacyHeaderMatch) {
+    version = parseInt(legacyHeaderMatch[1], 10);
+    language = legacyHeaderMatch[2];
+    updatedAt = legacyHeaderMatch[3];
+  } else {
+    const genericHeaderMatch = markdown.match(/<!--\s*gentle-playbook:v(\d+)(?:\s+lang=([^\s]+))?(?:\s+stack=([^\s]+))?(?:\s+scope=([^\s]+))?\s+updated=([^\s]+)\s*-->/);
+    if (genericHeaderMatch) {
+      version = parseInt(genericHeaderMatch[1], 10);
+      if (genericHeaderMatch[2]) language = genericHeaderMatch[2];
+      if (genericHeaderMatch[3]) stackId = genericHeaderMatch[3];
+      if (genericHeaderMatch[4]) scope = genericHeaderMatch[4] as PlaybookScope;
+      updatedAt = genericHeaderMatch[5];
+    }
   }
 
   // Fallback language detection from title if missing
@@ -48,8 +77,20 @@ export function parsePlaybook(markdown: string): Playbook {
     if (titleMatch) {
       language = titleMatch[1].trim().toLowerCase();
     } else {
-      language = 'unknown';
+      language = stackId || 'unknown';
     }
+  }
+
+  if (stackId) {
+    scope = 'stack';
+    if (!language || language === 'unknown') language = stackId;
+  } else if (scope === 'project' || language === 'project' || language === 'local') {
+    scope = 'project';
+    language = 'project';
+  } else if (language === AGENTS_PREFERENCES_ID) {
+    scope = 'agents';
+  } else if (!scope) {
+    scope = 'global';
   }
 
   const topology: Topology = {
@@ -256,6 +297,10 @@ export function parsePlaybook(markdown: string): Playbook {
     source,
     projectType,
     stack,
+    scope,
+    stackId,
+    stackName,
+    requiredFlags,
     invariants,
     askRules,
     neverRules: neverRules.length > 0 ? neverRules : undefined,
@@ -270,12 +315,31 @@ export function parsePlaybook(markdown: string): Playbook {
 export function serializePlaybook(playbook: Playbook): string {
   const parts: string[] = [];
 
-  // 1. Metadata Header
-  parts.push(`<!-- gentle-playbook:v${playbook.version} lang=${playbook.language} updated=${playbook.updatedAt} -->`);
-  if (playbook.language === AGENTS_PREFERENCES_ID) {
-    parts.push('# Playbook: Agents Preferences');
+  // 1. Metadata Header / Frontmatter
+  if (playbook.scope === 'stack' || playbook.stackId) {
+    parts.push('---');
+    parts.push(`stack: ${playbook.stackId || playbook.language}`);
+    if (playbook.stackName) parts.push(`name: ${playbook.stackName}`);
+    if (playbook.requiredFlags && playbook.requiredFlags.length > 0) {
+      parts.push(`required_flags: [${playbook.requiredFlags.join(', ')}]`);
+    }
+    parts.push('scope: stack');
+    parts.push('---');
+    parts.push(`<!-- gentle-playbook:v${playbook.version} stack=${playbook.stackId || playbook.language} updated=${playbook.updatedAt} -->`);
+    parts.push(`# Playbook: Stack ${playbook.stackName || playbook.stackId || capitalize(playbook.language)}`);
+  } else if (playbook.scope === 'project' || playbook.language === 'project') {
+    parts.push('---');
+    parts.push('scope: project');
+    parts.push('---');
+    parts.push(`<!-- gentle-playbook:v${playbook.version} scope=project updated=${playbook.updatedAt} -->`);
+    parts.push('# Playbook: Local Project');
   } else {
-    parts.push(`# Playbook: ${capitalize(playbook.language)}`);
+    parts.push(`<!-- gentle-playbook:v${playbook.version} lang=${playbook.language} updated=${playbook.updatedAt} -->`);
+    if (playbook.language === AGENTS_PREFERENCES_ID) {
+      parts.push('# Playbook: Agents Preferences');
+    } else {
+      parts.push(`# Playbook: ${capitalize(playbook.language)}`);
+    }
   }
   parts.push('');
 

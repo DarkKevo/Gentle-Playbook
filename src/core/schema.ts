@@ -1,6 +1,19 @@
 export type RuleType = 'invariant' | 'ask' | 'never';
 
+export type PlaybookScope = 'global' | 'stack' | 'project' | 'agents';
+
 export const AGENTS_PREFERENCES_ID = 'agents-preferences';
+
+export interface StackDetectionFileRule {
+  path: string;
+  contains?: string[];
+  exists?: boolean;
+}
+
+export interface StackDetectionRule {
+  requiredFlags: string[];
+  files?: StackDetectionFileRule[];
+}
 
 export interface BaseRule {
   id: string;
@@ -48,6 +61,11 @@ export interface Playbook {
   source?: string;
   projectType?: string;
   stack?: string[];
+  scope?: PlaybookScope;
+  stackId?: string;
+  stackName?: string;
+  requiredFlags?: string[];
+  detection?: StackDetectionRule;
   invariants: InvariantRule[];
   askRules: AskRule[];
   neverRules?: NeverRule[];

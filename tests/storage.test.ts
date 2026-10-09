@@ -98,4 +98,113 @@ describe('PlaybookStorage', () => {
     const loadedViaAlias = await storage.getPlaybook('agents');
     expect(loadedViaAlias?.invariants[0].id).toBe('require-write-approval');
   });
+
+  it('should save, list, get, delete stack playbooks without polluting languages', async () => {
+    expect(await storage.listStacks()).toEqual([]);
+    expect(await storage.hasStack('go-gin')).toBe(false);
+
+    const stackPb: Playbook = {
+      language: 'go-gin',
+      stackId: 'go-gin',
+      stackName: 'Go + Gin REST API',
+      requiredFlags: ['go', 'gin'],
+      scope: 'stack',
+      version: 1,
+      updatedAt: '2026-10-08',
+      topology: { pattern: 'Standard Layout', directories: ['cmd/api/'] },
+      invariants: [
+        {
+          id: 'use-gin-context',
+          type: 'invariant',
+          title: 'Utilizar gin.Context en handlers',
+          surface: 'cmd/api,internal/handlers',
+          description: 'Todos los handlers deben recibir *gin.Context.',
+        },
+      ],
+      askRules: [],
+      snippets: [],
+    };
+
+    await storage.saveStack(stackPb);
+
+    expect(await storage.hasStack('go-gin')).toBe(true);
+    expect(await storage.listStacks()).toEqual(['go-gin']);
+    expect(await storage.listLanguages()).toEqual([]); // Languages intact
+
+    const loaded = await storage.getStack('go-gin');
+    expect(loaded).not.toBeNull();
+    expect(loaded?.stackId).toBe('go-gin');
+    expect(loaded?.requiredFlags).toEqual(['go', 'gin']);
+    expect(loaded?.invariants[0].id).toBe('use-gin-context');
+
+    // Rule deletion in stack
+    const delRuleRes = await storage.deleteRuleFromStack('go-gin', 'use-gin-context');
+    expect(delRuleRes.deleted).toBe(true);
+    const reloaded = await storage.getStack('go-gin');
+    expect(reloaded?.invariants.length).toBe(0);
+
+    // Delete stack
+    const deleted = await storage.deleteStack('go-gin');
+    expect(deleted).toBe(true);
+    expect(await storage.hasStack('go-gin')).toBe(false);
+    expect(await storage.listStacks()).toEqual([]);
+  });
+
+  it('should save, get, and delete local project playbook at specified project path', async () => {
+    const projectDir = path.join(tempDir, 'sample-project');
+    await fs.mkdir(projectDir, { recursive: true });
+
+    expect(await storage.hasLocalProjectPlaybook(projectDir)).toBe(false);
+    expect(await storage.getLocalProjectPlaybook(projectDir)).toBeNull();
+
+    const localPb: Playbook = {
+      language: 'project',
+      scope: 'project',
+      version: 1,
+      updatedAt: '2026-10-08',
+      topology: { pattern: 'Project Custom', directories: ['src/'] },
+      invariants: [
+        {
+          id: 'local-auth-guard',
+          type: 'invariant',
+          title: 'Guardia local de autenticación',
+          surface: 'src/auth',
+          description: 'Regla local específica de este repositorio.',
+        },
+      ],
+      askRules: [],
+      neverRules: [
+        {
+          id: 'no-raw-sql',
+          type: 'never',
+          title: 'Sin raw SQL',
+          surface: 'src/db',
+          description: 'No usar queries SQL raw bajo ninguna circunstancia.',
+        },
+      ],
+      snippets: [],
+    };
+
+    await storage.saveLocalProjectPlaybook(localPb, projectDir);
+
+    expect(await storage.hasLocalProjectPlaybook(projectDir)).toBe(true);
+    const loaded = await storage.getLocalProjectPlaybook(projectDir);
+    expect(loaded).not.toBeNull();
+    expect(loaded?.scope).toBe('project');
+    expect(loaded?.invariants[0].id).toBe('local-auth-guard');
+    expect(loaded?.neverRules?.[0].id).toBe('no-raw-sql');
+
+    // Delete rule from project
+    const delRule = await storage.deleteRuleFromProject(projectDir, 'local-auth-guard');
+    expect(delRule.deleted).toBe(true);
+
+    const reloaded = await storage.getLocalProjectPlaybook(projectDir);
+    expect(reloaded?.invariants.length).toBe(0);
+    expect(reloaded?.neverRules?.length).toBe(1);
+
+    // Delete local project playbook
+    const delProj = await storage.deleteLocalProjectPlaybook(projectDir);
+    expect(delProj).toBe(true);
+    expect(await storage.hasLocalProjectPlaybook(projectDir)).toBe(false);
+  });
 });

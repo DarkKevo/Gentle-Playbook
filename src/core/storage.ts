@@ -8,14 +8,27 @@ import { resolveLanguage } from './languages.js';
 
 export class PlaybookStorage {
   private baseDir: string;
+  private stacksDir: string;
 
   constructor(customDir?: string) {
     if (customDir) {
       this.baseDir = customDir;
+      if (path.basename(customDir) === 'languages') {
+        this.stacksDir = path.join(path.dirname(customDir), 'stacks');
+      } else {
+        this.stacksDir = path.join(customDir, 'stacks');
+      }
     } else if (process.env.GENTLE_PLAYBOOK_DIR) {
       this.baseDir = process.env.GENTLE_PLAYBOOK_DIR;
+      if (path.basename(this.baseDir) === 'languages') {
+        this.stacksDir = path.join(path.dirname(this.baseDir), 'stacks');
+      } else {
+        this.stacksDir = path.join(this.baseDir, 'stacks');
+      }
     } else {
-      this.baseDir = path.join(os.homedir(), '.config', 'gentle-playbook', 'languages');
+      const configRoot = path.join(os.homedir(), '.config', 'gentle-playbook');
+      this.baseDir = path.join(configRoot, 'languages');
+      this.stacksDir = path.join(configRoot, 'stacks');
     }
   }
 
@@ -23,8 +36,13 @@ export class PlaybookStorage {
     return this.baseDir;
   }
 
+  getStacksDir(): string {
+    return this.stacksDir;
+  }
+
   async ensureDir(): Promise<void> {
     await fs.mkdir(this.baseDir, { recursive: true });
+    await fs.mkdir(this.stacksDir, { recursive: true });
   }
 
   private getFilePath(language: string): string {
@@ -113,13 +131,20 @@ export class PlaybookStorage {
       return { deleted: false };
     }
 
+    const res = this.removeRuleFromPlaybook(playbook, ruleId);
+    if (res.deleted) {
+      await this.savePlaybook(playbook);
+    }
+    return res;
+  }
+
+  private removeRuleFromPlaybook(playbook: Playbook, ruleId: string): { deleted: boolean; ruleType?: string } {
     const normId = ruleId.trim().toLowerCase();
 
     // 1. Check in Invariants
     const invIdx = playbook.invariants.findIndex((i) => i.id.toLowerCase() === normId);
     if (invIdx >= 0) {
       playbook.invariants.splice(invIdx, 1);
-      await this.savePlaybook(playbook);
       return { deleted: true, ruleType: 'invariant' };
     }
 
@@ -127,7 +152,6 @@ export class PlaybookStorage {
     const askIdx = playbook.askRules.findIndex((a) => a.id.toLowerCase() === normId);
     if (askIdx >= 0) {
       playbook.askRules.splice(askIdx, 1);
-      await this.savePlaybook(playbook);
       return { deleted: true, ruleType: 'ask' };
     }
 
@@ -139,7 +163,6 @@ export class PlaybookStorage {
         if (playbook.neverRules.length === 0) {
           delete playbook.neverRules;
         }
-        await this.savePlaybook(playbook);
         return { deleted: true, ruleType: 'never' };
       }
     }
@@ -148,10 +171,152 @@ export class PlaybookStorage {
     const snipIdx = playbook.snippets.findIndex((s) => s.id.toLowerCase() === normId);
     if (snipIdx >= 0) {
       playbook.snippets.splice(snipIdx, 1);
-      await this.savePlaybook(playbook);
       return { deleted: true, ruleType: 'snippet' };
     }
 
     return { deleted: false };
+  }
+
+  // --- Stacks Management ---
+  private getStackFilePath(stackId: string): string {
+    const slug = stackId.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-');
+    return path.join(this.stacksDir, `${slug}.md`);
+  }
+
+  async listStacks(): Promise<string[]> {
+    await this.ensureDir();
+    try {
+      const entries = await fs.readdir(this.stacksDir, { withFileTypes: true });
+      return entries
+        .filter((entry) => entry.isFile() && entry.name.endsWith('.md'))
+        .map((entry) => path.basename(entry.name, '.md'))
+        .sort();
+    } catch {
+      return [];
+    }
+  }
+
+  async hasStack(stackId: string): Promise<boolean> {
+    const filePath = this.getStackFilePath(stackId);
+    try {
+      await fs.access(filePath);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async getStack(stackId: string): Promise<Playbook | null> {
+    const filePath = this.getStackFilePath(stackId);
+    try {
+      const content = await fs.readFile(filePath, 'utf-8');
+      const pb = parsePlaybook(content);
+      pb.scope = 'stack';
+      if (!pb.stackId) pb.stackId = stackId;
+      return pb;
+    } catch (err: any) {
+      if (err.code === 'ENOENT') {
+        return null;
+      }
+      throw err;
+    }
+  }
+
+  async saveStack(playbook: Playbook): Promise<void> {
+    await this.ensureDir();
+    playbook.scope = 'stack';
+    const slug = (playbook.stackId || playbook.language).trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-');
+    playbook.stackId = slug;
+    playbook.language = slug;
+    const { playbook: safePlaybook } = filterPlaybookRules(playbook);
+    const filePath = this.getStackFilePath(slug);
+    const markdown = serializePlaybook(safePlaybook);
+    await fs.writeFile(filePath, markdown, 'utf-8');
+  }
+
+  async deleteStack(stackId: string): Promise<boolean> {
+    const filePath = this.getStackFilePath(stackId);
+    try {
+      await fs.unlink(filePath);
+      return true;
+    } catch (err: any) {
+      if (err.code === 'ENOENT') {
+        return false;
+      }
+      throw err;
+    }
+  }
+
+  async deleteRuleFromStack(stackId: string, ruleId: string): Promise<{ deleted: boolean; ruleType?: string }> {
+    const pb = await this.getStack(stackId);
+    if (!pb) return { deleted: false };
+    const res = this.removeRuleFromPlaybook(pb, ruleId);
+    if (res.deleted) {
+      await this.saveStack(pb);
+    }
+    return res;
+  }
+
+  // --- Local Project Playbook Management ---
+  getLocalProjectPath(projectDir?: string): string {
+    const targetDir = projectDir || process.cwd();
+    return path.join(targetDir, 'playbook.md');
+  }
+
+  async hasLocalProjectPlaybook(projectDir?: string): Promise<boolean> {
+    const filePath = this.getLocalProjectPath(projectDir);
+    try {
+      await fs.access(filePath);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async getLocalProjectPlaybook(projectDir?: string): Promise<Playbook | null> {
+    const filePath = this.getLocalProjectPath(projectDir);
+    try {
+      const content = await fs.readFile(filePath, 'utf-8');
+      const pb = parsePlaybook(content);
+      pb.scope = 'project';
+      return pb;
+    } catch (err: any) {
+      if (err.code === 'ENOENT') {
+        return null;
+      }
+      throw err;
+    }
+  }
+
+  async saveLocalProjectPlaybook(playbook: Playbook, projectDir?: string): Promise<void> {
+    playbook.scope = 'project';
+    playbook.language = 'project';
+    const { playbook: safePlaybook } = filterPlaybookRules(playbook);
+    const filePath = this.getLocalProjectPath(projectDir);
+    const markdown = serializePlaybook(safePlaybook);
+    await fs.writeFile(filePath, markdown, 'utf-8');
+  }
+
+  async deleteLocalProjectPlaybook(projectDir?: string): Promise<boolean> {
+    const filePath = this.getLocalProjectPath(projectDir);
+    try {
+      await fs.unlink(filePath);
+      return true;
+    } catch (err: any) {
+      if (err.code === 'ENOENT') {
+        return false;
+      }
+      throw err;
+    }
+  }
+
+  async deleteRuleFromProject(projectDir: string, ruleId: string): Promise<{ deleted: boolean; ruleType?: string }> {
+    const pb = await this.getLocalProjectPlaybook(projectDir);
+    if (!pb) return { deleted: false };
+    const res = this.removeRuleFromPlaybook(pb, ruleId);
+    if (res.deleted) {
+      await this.saveLocalProjectPlaybook(pb, projectDir);
+    }
+    return res;
   }
 }
