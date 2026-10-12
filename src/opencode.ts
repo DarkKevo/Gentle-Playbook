@@ -22,12 +22,16 @@ import {
   formatAgentPreferencesForTool,
 } from './core/parser.js';
 import { resolveLanguage } from './core/languages.js';
+import { validateRuleContent } from './core/security.js';
 import {
   getActiveWorkspacePlaybooks,
   maskSubordinatePlaybooks,
+  findCollidingRules,
 } from './core/stack-handler.js';
+import { detectActiveStacks } from './core/stack-detector.js';
+import { detectProjectLanguage } from './extract/extractor.js';
 import { checkPathViolation } from './core/checker.js';
-import { AGENTS_PREFERENCES_ID } from './core/schema.js';
+import { AGENTS_PREFERENCES_ID, Playbook } from './core/schema.js';
 import {
   buildSystemGuidance,
   evaluateWorkspacePrompt,
@@ -139,6 +143,337 @@ function extractTargetPath(args: Record<string, unknown> | undefined): string {
 }
 
 // ---------------------------------------------------------------------------
+// playbook_manage: mutaciones agente-mediadas (flujo preview → confirmación → save)
+// ---------------------------------------------------------------------------
+
+interface ManageRule {
+  type: 'invariant' | 'ask' | 'never';
+  id: string;
+  title?: string;
+  surface?: string;
+  description: string;
+  trigger?: string;
+  antiTrigger?: string;
+  prompt?: string;
+  defaultAction?: string;
+  reason?: string;
+}
+
+type ManageScope = 'project' | 'agents' | 'stack' | 'global';
+
+interface ManageTarget {
+  scope: ManageScope;
+  key: string;
+  label: string;
+  isNew: boolean;
+  playbook: Playbook;
+}
+
+async function resolveManageTarget(
+  storage: PlaybookStorage,
+  cwd: string,
+  language: string
+): Promise<ManageTarget> {
+  const today = new Date().toISOString().split('T')[0];
+  const skeleton = (overrides: Partial<Playbook>): Playbook =>
+    ({
+      version: 1,
+      updatedAt: today,
+      topology: { pattern: 'Standard Layout', directories: ['src/'] },
+      invariants: [],
+      askRules: [],
+      snippets: [],
+      ...overrides,
+    } as unknown as Playbook);
+
+  const normalized = (language || '').trim().toLowerCase();
+
+  if (normalized === 'project' || normalized === 'local') {
+    const pb = await storage.getLocalProjectPlaybook(cwd);
+    return {
+      scope: 'project',
+      key: 'project',
+      label: 'PROYECTO LOCAL (playbook.md)',
+      isNew: !pb,
+      playbook: pb || skeleton({ language: 'project', scope: 'project' }),
+    };
+  }
+
+  if (normalized === 'agents' || normalized === AGENTS_PREFERENCES_ID) {
+    const pb = await storage.getAgentPreferences();
+    return {
+      scope: 'agents',
+      key: AGENTS_PREFERENCES_ID,
+      label: 'Agents Preferences',
+      isNew: !pb,
+      playbook:
+        pb || skeleton({ language: AGENTS_PREFERENCES_ID, scope: 'agents', topology: { pattern: 'Agent Runtime', directories: [] } }),
+    };
+  }
+
+  if (normalized && (await storage.hasStack(normalized))) {
+    const pb = await storage.getStack(normalized);
+    return {
+      scope: 'stack',
+      key: normalized,
+      label: `STACK ${normalized.toUpperCase()}`,
+      isNew: !pb,
+      playbook:
+        pb ||
+        skeleton({
+          language: normalized,
+          stackId: normalized,
+          stackName: normalized.toUpperCase(),
+          requiredFlags: [normalized],
+          scope: 'stack',
+          topology: { pattern: 'Standard Stack Layout', directories: ['src/'] },
+        }),
+    };
+  }
+
+  const resolved = resolveLanguage(normalized || 'generic');
+  const pb = await storage.getPlaybook(resolved);
+  return {
+    scope: 'global',
+    key: resolved,
+    label: `GLOBAL: ${resolved.toUpperCase()}`,
+    isNew: !pb,
+    playbook: pb || skeleton({ language: resolved, scope: 'global' }),
+  };
+}
+
+/**
+ * Valida el contenido de la regla contra el filtro anti-inyección. Nunca
+ * persistimos en silencio contenido que el sanitizador descartaría: el agente
+ * recibe el campo ofensivo y lo corrige antes de guardar.
+ */
+function validateManageRule(rule: ManageRule): { valid: boolean; reason?: string } {
+  const res = validateRuleContent(rule as never);
+  if (!res.valid) return { valid: false, reason: `El campo de la regla activó el filtro de seguridad: ${res.reason}` };
+  if (rule.type === 'ask' && !rule.prompt?.trim()) {
+    return { valid: false, reason: 'Las reglas ASK requieren el campo prompt (la pregunta canónica).' };
+  }
+  return { valid: true };
+}
+
+/** Aplica la regla al playbook con upsert por id (misma lógica que la extensión Pi). */
+function applyManageRule(pb: Playbook, rule: ManageRule): void {
+  if (rule.type === 'invariant') {
+    const idx = pb.invariants.findIndex((i) => i.id === rule.id);
+    const newRule = {
+      id: rule.id,
+      type: 'invariant' as const,
+      title: rule.title || rule.id,
+      surface: rule.surface || 'src/',
+      description: rule.description,
+    };
+    if (idx >= 0) pb.invariants[idx] = newRule;
+    else pb.invariants.push(newRule);
+  } else if (rule.type === 'never') {
+    if (!pb.neverRules) pb.neverRules = [];
+    const idx = pb.neverRules.findIndex((n) => n.id === rule.id);
+    const newRule = {
+      id: rule.id,
+      type: 'never' as const,
+      title: rule.title || rule.id,
+      surface: rule.surface || 'general',
+      description: rule.description,
+      reason: rule.reason || '',
+    };
+    if (idx >= 0) pb.neverRules[idx] = newRule;
+    else pb.neverRules.push(newRule);
+  } else {
+    const idx = pb.askRules.findIndex((a) => a.id === rule.id);
+    const newRule = {
+      id: rule.id,
+      type: 'ask' as const,
+      title: rule.title || rule.id,
+      surface: rule.surface || 'src/',
+      description: rule.description,
+      trigger: rule.trigger || '',
+      antiTrigger: rule.antiTrigger || '',
+      prompt: rule.prompt || '',
+      defaultAction: rule.defaultAction || 'Omitir regla',
+    };
+    if (idx >= 0) pb.askRules[idx] = newRule;
+    else pb.askRules.push(newRule);
+  }
+}
+
+/**
+ * Capas candidatas para el chequeo de colisiones: la misma construcción que
+ * el wizard add de Pi (capas activas excluyendo el ámbito destino).
+ */
+async function manageCandidateLayers(
+  storage: PlaybookStorage,
+  cwd: string,
+  target: ManageTarget
+): Promise<Array<{ scopeLabel: string; playbook: Playbook }>> {
+  const candidates: Array<{ scopeLabel: string; playbook: Playbook }> = [];
+
+  if (target.scope !== 'project') {
+    const localPb = await storage.getLocalProjectPlaybook(cwd);
+    if (localPb) candidates.push({ scopeLabel: 'LOCAL (playbook.md)', playbook: localPb });
+  }
+
+  const allStackSlugs = await storage.listStacks();
+  const allStackPbs: Playbook[] = [];
+  for (const sSlug of allStackSlugs) {
+    const sPb = await storage.getStack(sSlug);
+    if (sPb) allStackPbs.push(sPb);
+  }
+  const activeStacks = await detectActiveStacks(cwd, allStackPbs);
+  for (const actStack of activeStacks) {
+    if (target.scope !== 'stack' || actStack.stackId !== target.key) {
+      candidates.push({ scopeLabel: `STACK: ${actStack.stackId}`, playbook: actStack });
+    }
+  }
+
+  if (target.scope !== 'global') {
+    const detectedLang = await detectProjectLanguage(cwd);
+    if (detectedLang && detectedLang !== 'generic') {
+      const globPb = await storage.getPlaybook(detectedLang);
+      if (globPb) candidates.push({ scopeLabel: `GLOBAL: ${detectedLang}`, playbook: globPb });
+    }
+  }
+
+  return candidates;
+}
+
+function renderManageRuleSummary(rule: ManageRule): string {
+  const typeLabel = rule.type === 'invariant' ? 'INVARIANT' : rule.type === 'never' ? 'NUNCA/PROHIBICIÓN' : 'ASK';
+  const lines = [`**Tipo:** ${typeLabel} · **ID:** ${rule.id} · **Surface:** \`${rule.surface || 'src/'}\``];
+  if (rule.title) lines.push(`**Título:** ${rule.title}`);
+  lines.push(`**Regla:** ${rule.description}`);
+  if (rule.type === 'never' && rule.reason) lines.push(`**Motivo:** ${rule.reason}`);
+  if (rule.type === 'ask') {
+    lines.push(`**Trigger:** ${rule.trigger || '-'} · **Anti-Trigger:** ${rule.antiTrigger || '-'}`);
+    lines.push(`**Pregunta canónica:** "${rule.prompt}"`);
+    lines.push(`**Default:** ${rule.defaultAction || 'Omitir regla'}`);
+  }
+  return lines.join('\n');
+}
+
+async function persistManageTarget(
+  storage: PlaybookStorage,
+  cwd: string,
+  target: ManageTarget,
+  rule?: ManageRule
+): Promise<Playbook> {
+  if (rule) {
+    applyManageRule(target.playbook, rule);
+    target.playbook.version += 1;
+    target.playbook.updatedAt = new Date().toISOString().split('T')[0];
+  }
+  if (target.scope === 'project') await storage.saveLocalProjectPlaybook(target.playbook, cwd);
+  else if (target.scope === 'agents') await storage.saveAgentPreferences(target.playbook);
+  else if (target.scope === 'stack') await storage.saveStack(target.playbook);
+  else await storage.savePlaybook(target.playbook);
+  return target.playbook;
+}
+
+async function executePlaybookManage(
+  storage: PlaybookStorage,
+  cwd: string,
+  args: {
+    action: 'preview' | 'save' | 'delete';
+    language?: string;
+    rule?: ManageRule;
+    ruleId?: string;
+    whole?: boolean;
+  }
+): Promise<string> {
+  if (!args?.action) throw new Error('playbook_manage requiere action: preview | save | delete');
+
+  if (args.action === 'delete') {
+    const lang = (args.language || '').trim().toLowerCase();
+    if (!lang) throw new Error('playbook_manage delete requiere language (lenguaje, stack o agents)');
+
+    if (args.whole) {
+      if (lang === 'project' || lang === 'local') {
+        throw new Error('El playbook local (playbook.md) es un archivo del repositorio: editá o borrá el archivo directamente.');
+      }
+      const target = await resolveManageTarget(storage, cwd, lang);
+      if (target.isNew) return `El playbook ${target.label} no existe: nada que eliminar.`;
+      await storage.deletePlaybook(target.key);
+      return `✓ Playbook ${target.label} eliminado por completo.`;
+    }
+
+    if (!args.ruleId) throw new Error('playbook_manage delete requiere ruleId (o whole=true para el playbook completo)');
+    if (lang === 'project' || lang === 'local') {
+      const res = await storage.deleteRuleFromProject(cwd, args.ruleId);
+      if (!res.deleted) return `La regla "${args.ruleId}" no existe en PROYECTO LOCAL (playbook.md).`;
+      return `✓ Regla "${args.ruleId}" (${res.ruleType}) eliminada de PROYECTO LOCAL (playbook.md).`;
+    }
+    const target = await resolveManageTarget(storage, cwd, lang);
+    if (target.isNew) return `El playbook ${target.label} no existe: nada que eliminar.`;
+    const res = await storage.deleteRule(target.key, args.ruleId);
+    if (!res.deleted) return `La regla "${args.ruleId}" no existe en ${target.label}.`;
+    return `✓ Regla "${args.ruleId}" (${res.ruleType}) eliminada de ${target.label}.`;
+  }
+
+  // preview | save
+  if (!args.rule) throw new Error(`playbook_manage ${args.action} requiere el objeto rule completo`);
+  const rule = args.rule;
+  if (!rule.type || !rule.id || !rule.description) {
+    throw new Error('La regla requiere type (invariant|ask|never), id y description');
+  }
+
+  const validity = validateManageRule(rule);
+  const target = await resolveManageTarget(storage, cwd, args.language || '');
+
+  if (!validity.valid) {
+    if (args.action === 'save') {
+      // Nunca persistir en silencio contenido que el sanitizador descartaría.
+      throw new Error(`CONTENIDO INVALIDO — ${validity.reason}. Corregí el texto y reintentá; la regla NO se guardó.`);
+    }
+    return [
+      `## Preview — Regla para ${target.label}${target.isNew ? ' (nuevo playbook)' : ''}`,
+      '',
+      `❌ CONTENIDO INVALIDO: ${validity.reason}`,
+      'Corregí el texto de la regla y volvé a ejecutar el preview. Este contenido NO debe guardarse.',
+    ].join('\n');
+  }
+
+  const collisions = findCollidingRules(
+    { id: rule.id, surface: rule.surface || '', title: rule.title || '', description: rule.description },
+    await manageCandidateLayers(storage, cwd, target)
+  );
+
+  if (args.action === 'preview') {
+    const lines = [
+      `## Preview — Regla para ${target.label}${target.isNew ? ' (nuevo playbook)' : ''}`,
+      '',
+      renderManageRuleSummary(rule),
+      '',
+      '### Colisiones',
+    ];
+    if (collisions.length === 0) {
+      lines.push('NINGUNA — la regla puede guardarse sin conflictos con otras capas activas.');
+    } else {
+      lines.push(`⚠️ ${collisions.length} colisión(es) con capas existentes:`);
+      for (const c of collisions) {
+        lines.push(`- [${c.scopeLabel}] ${c.rule.id}: ${c.rule.title || ''} (surface \`${c.rule.surface}\`)`);
+      }
+      lines.push('Si guardás igual, esta regla prevalece en su ámbito (soberanía local por capa).');
+    }
+    lines.push('', '### Siguiente paso', 'Mostrale este preview al usuario, pedí confirmación y ejecutá playbook_manage con action=save usando exactamente los mismos argumentos.');
+    return lines.join('\n');
+  }
+
+  // save
+  const saved = await persistManageTarget(storage, cwd, target, rule);
+  return [
+    `✓ Regla [${rule.id.toUpperCase()}] (${rule.type}) guardada en ${target.label} (v${saved.version}).`,
+    '',
+    renderManageRuleSummary(rule),
+    ...(collisions.length > 0
+      ? ['', `Nota: prevalece sobre ${collisions.length} regla(s) en colisión dentro de su ámbito.`]
+      : []),
+  ].join('\n');
+}
+
+// ---------------------------------------------------------------------------
 // Plugin
 // ---------------------------------------------------------------------------
 
@@ -241,6 +576,41 @@ const GentlePlaybookPlugin: OpenCodePlugin = async ({ directory, worktree }) => 
           return results.join('\n\n---\n\n');
         },
       },
+      // Mutaciones agente-mediadas: el agente sintetiza la regla conversando
+    // con el usuario, muestra el preview, confirma y persiste. Reemplaza los
+    // wizards interactivos de Pi (OpenCode no expone UI a plugins).
+    playbook_manage: {
+      description:
+        'Preview, save, or delete architectural rules and playbooks. Two-phase flow: action=preview validates the rule content (injection filter), checks collisions across active layers, and returns a preview WITHOUT writing to disk; then the agent asks the user for confirmation and calls action=save with the same arguments to persist. action=delete removes a rule by ruleId or a whole playbook with whole=true. Target language accepts a global language (go, typescript...), a stack slug, "agents", or "project" for the local playbook.md.',
+      args: {
+        action: z.enum(['preview', 'save', 'delete']).describe('preview (no disk write), save (persist), delete'),
+        language: z
+          .string()
+          .optional()
+          .describe("Target: language (e.g. 'go'), stack slug, 'agents', or 'project' for the local playbook.md"),
+        ruleId: z.string().optional().describe('Rule id to delete (with action=delete)'),
+        whole: z.boolean().optional().describe('Delete the whole playbook (with action=delete)'),
+        rule: z
+          .object({
+            type: z.enum(['invariant', 'ask', 'never']),
+            id: z.string().min(1),
+            title: z.string().optional(),
+            surface: z.string().optional(),
+            description: z.string().min(1),
+            trigger: z.string().optional(),
+            antiTrigger: z.string().optional(),
+            prompt: z.string().optional(),
+            defaultAction: z.string().optional(),
+            reason: z.string().optional(),
+          })
+          .optional()
+          .describe('The synthesized rule (required for preview/save)'),
+      },
+      async execute(args, context) {
+        const manageCwd = context.worktree || context.directory || cwd();
+        return executePlaybookManage(storage, manageCwd, args as never);
+      },
+    },
     },
 
     // Puntero liviano en system prompt: mismo texto que Pi inyecta en

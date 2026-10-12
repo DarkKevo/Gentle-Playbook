@@ -56,11 +56,15 @@ with pre-flight, write-barrier enforcement, and on-demand consultation.
   issue #23440); write/edit/patch tools targeted via `filePath` args; zod 4.1.8
   devDependency matching @opencode-ai/plugin. Structural types follow the repo's
   ExtensionAPI precedent (no @opencode-ai/plugin dependency). 247/247 tests, tsc clean.
-- [ ] Task 3: `playbook_manage` tool (agent-mediated mutations). Two-phase actions:
+- [x] Task 3: `playbook_manage` tool (agent-mediated mutations). Two-phase actions:
   `preview` (collision check + formatted preview, no write) and `save` (persist via
   core storage), plus `delete` (rule or whole playbook). The agent synthesizes rules
   conversationally (LLM = the agent itself; no headless modelRegistry needed) and
-  drives confirmation with the user between preview and save.
+  drives confirmation with the user between preview and save. — Commit: `feat(opencode): add agent-mediated playbook_manage tool with preview/save/delete`.
+  Hardening over the Pi flow: injection-like rule content is validated loudly via
+  validateRuleContent before persisting (never silently dropped by the storage
+  sanitizer — the T2 gotcha became a feature); deletes support global/stack/agents/
+  project targets; whole-playbook delete refuses project (edit playbook.md directly).
 - [ ] Task 4: Command templates (Spanish, repo convention) in
   `src/opencode-commands/`: `playbook.md` (list/show/inspect),
   `playbook-add.md` (agent-mediated add wizard using playbook_manage),
