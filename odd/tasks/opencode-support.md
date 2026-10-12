@@ -42,13 +42,20 @@ with pre-flight, write-barrier enforcement, and on-demand consultation.
   (neverRules/askRules/invariants over `tools:*`), and path-violation barrier
   decision. Refactor `src/index.ts` to consume it with **no behavior change**.
   All existing tests stay green. — Commit: `refactor(core): extract runtime-agnostic governance module shared by Pi and OpenCode runtimes` (229/229 tests, tsc clean; 18 new parity tests in tests/governance.test.ts)
-- [ ] Task 2: OpenCode plugin entry (`src/opencode.ts`). Register `playbook_consult`
+- [x] Task 2: OpenCode plugin entry (`src/opencode.ts`). Register `playbook_consult`
   tool (Zod args: language, surface) reusing core formatting; `experimental.chat.system.transform`
   guidance pointer; `chat.message` pre-flight (transform path: append governance
   directive to user message parts, verify blocking behavior of throw empirically);
   `tool.execute.before` write barrier for write/edit (fail-closed);
   `experimental.session.compacting` playbook-context injection (OpenCode-only bonus);
-  `event` session.created active-playbook notification.
+  `event` session.created active-playbook notification. — Commit: `feat(opencode): add OpenCode plugin entry with consult tool, pre-flight and write barrier`.
+  Empirical findings baked into the design: `throw` in `chat.message` does NOT cancel
+  the message (upstream opencode issue #30434), so bypass attempts become visible
+  governance directives (`buildBypassGovernanceDirective`) while the write barrier
+  keeps real enforcement; parts are mutated in-place instead of pushed (upstream
+  issue #23440); write/edit/patch tools targeted via `filePath` args; zod 4.1.8
+  devDependency matching @opencode-ai/plugin. Structural types follow the repo's
+  ExtensionAPI precedent (no @opencode-ai/plugin dependency). 247/247 tests, tsc clean.
 - [ ] Task 3: `playbook_manage` tool (agent-mediated mutations). Two-phase actions:
   `preview` (collision check + formatted preview, no write) and `save` (persist via
   core storage), plus `delete` (rule or whole playbook). The agent synthesizes rules
