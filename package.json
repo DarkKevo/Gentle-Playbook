@@ -8,7 +8,8 @@
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "build:opencode": "esbuild src/opencode.ts --bundle --platform=node --format=esm --target=node18 --outfile=dist/opencode.js"
   },
   "keywords": [
     "pi-package",
@@ -31,6 +32,7 @@
     "@earendil-works/pi-coding-agent": "^0.87.1",
     "@earendil-works/pi-tui": "^0.87.1",
     "@types/node": "^22.0.0",
+    "esbuild": "^0.28.2",
     "typescript": "^5.0.0",
     "vitest": "^3.0.0",
     "zod": "^4.6.6"
