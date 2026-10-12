@@ -73,14 +73,16 @@ with pre-flight, write-barrier enforcement, and on-demand consultation.
   `playbook-delete.md` (agent-mediated delete wizard). — Includes the
   `scope` arg on playbook_manage (scope=stack with a new slug creates the
   stack playbook) and 9 template-contract tests.
-- [ ] Task 5: Build & installer. Single-file esbuild bundle of the OpenCode entry
+- [x] Task 5: Build & installer. Single-file esbuild bundle of the OpenCode entry
   (`dist/opencode.js`), `install.sh` gains an OpenCode path: copy bundle to
   `~/.config/opencode/plugins/gentle-playbook.js` and command templates to
   `~/.config/opencode/command/`. Idempotent (overwrite on re-install).
-- [ ] Task 6: Tests. Vitest suite for governance module (Pi + OpenCode parity),
+- [x] Task 6: Tests. Vitest suite for governance module (Pi + OpenCode parity),
   OpenCode hooks with mocked `PluginInput`/Hooks harness, `playbook_manage`
   preview/save/delete round-trip, command template files exist with valid
-  frontmatter. Run full `npm test` + `tsc --noEmit`.
+  frontmatter. Run full `npm test` + `tsc --noEmit`. — Incremental suites per task:
+  19 governance parity + 17 adapter hooks + 17 manage + 9 template contracts = 62
+  new tests; 271/271 total green, tsc clean, bundle smoke-verified.
 - [ ] Task 7: Docs. README (Spanish) section "Soporte OpenCode": architecture,
   install, command usage, parity table (what maps, what is agent-mediated),
   and the compaction-context bonus. Task doc evidence updated with commits.
