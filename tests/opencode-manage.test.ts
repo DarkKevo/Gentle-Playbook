@@ -263,6 +263,40 @@ describe('playbook_manage tool (agent-mediated mutations)', () => {
       await expect(fs.access(localPath)).resolves.toBeUndefined();
     });
 
+    it('creates a new stack playbook when scope=stack with a new slug', async () => {
+      const manage = await manageTool();
+      const result = await manage.execute(
+        {
+          action: 'save',
+          language: 'go-gin',
+          scope: 'stack',
+          rule: {
+            type: 'never',
+            id: 'never-gin',
+            title: 'Prohibido Gin',
+            surface: 'general',
+            description: 'se exige net/http stdlib para HTTP',
+            reason: 'Arquitectura stdlib-first',
+          },
+        },
+        toolCtx(workDir)
+      );
+      const text = typeof result === 'string' ? result : result?.output;
+      expect(text).toContain('STACK GO-GIN');
+      const stack = await storage.getStack('go-gin');
+      expect(stack?.neverRules?.some((n) => n.id === 'never-gin')).toBe(true);
+    });
+
+    it('rejects scope=stack without a slug', async () => {
+      const manage = await manageTool();
+      await expect(
+        manage.execute(
+          { action: 'save', scope: 'stack', rule: goRule },
+          toolCtx(workDir)
+        )
+      ).rejects.toThrow('slug');
+    });
+
     it('upserts by id without duplicating', async () => {
       const manage = await manageTool();
       await manage.execute({ action: 'save', language: 'go', rule: goRule }, toolCtx(workDir));

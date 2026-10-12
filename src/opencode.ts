@@ -172,7 +172,8 @@ interface ManageTarget {
 async function resolveManageTarget(
   storage: PlaybookStorage,
   cwd: string,
-  language: string
+  language: string,
+  scopeHint?: 'global' | 'stack' | 'agents' | 'project'
 ): Promise<ManageTarget> {
   const today = new Date().toISOString().split('T')[0];
   const skeleton = (overrides: Partial<Playbook>): Playbook =>
@@ -188,7 +189,7 @@ async function resolveManageTarget(
 
   const normalized = (language || '').trim().toLowerCase();
 
-  if (normalized === 'project' || normalized === 'local') {
+  if (scopeHint === 'project' || !scopeHint && (normalized === 'project' || normalized === 'local')) {
     const pb = await storage.getLocalProjectPlaybook(cwd);
     return {
       scope: 'project',
@@ -199,7 +200,7 @@ async function resolveManageTarget(
     };
   }
 
-  if (normalized === 'agents' || normalized === AGENTS_PREFERENCES_ID) {
+  if (scopeHint === 'agents' || (!scopeHint && (normalized === 'agents' || normalized === AGENTS_PREFERENCES_ID))) {
     const pb = await storage.getAgentPreferences();
     return {
       scope: 'agents',
@@ -211,7 +212,8 @@ async function resolveManageTarget(
     };
   }
 
-  if (normalized && (await storage.hasStack(normalized))) {
+  if (scopeHint === 'stack' || (!scopeHint && normalized && (await storage.hasStack(normalized)))) {
+    if (!normalized) throw new Error('El ámbito stack requiere el slug del stack en language');
     const pb = await storage.getStack(normalized);
     return {
       scope: 'stack',
@@ -378,6 +380,7 @@ async function executePlaybookManage(
   args: {
     action: 'preview' | 'save' | 'delete';
     language?: string;
+    scope?: 'global' | 'stack' | 'agents' | 'project';
     rule?: ManageRule;
     ruleId?: string;
     whole?: boolean;
@@ -390,17 +393,17 @@ async function executePlaybookManage(
     if (!lang) throw new Error('playbook_manage delete requiere language (lenguaje, stack o agents)');
 
     if (args.whole) {
-      if (lang === 'project' || lang === 'local') {
+      if (lang === 'project' || lang === 'local' || args.scope === 'project') {
         throw new Error('El playbook local (playbook.md) es un archivo del repositorio: editá o borrá el archivo directamente.');
       }
-      const target = await resolveManageTarget(storage, cwd, lang);
+      const target = await resolveManageTarget(storage, cwd, lang, args.scope);
       if (target.isNew) return `El playbook ${target.label} no existe: nada que eliminar.`;
       await storage.deletePlaybook(target.key);
       return `✓ Playbook ${target.label} eliminado por completo.`;
     }
 
     if (!args.ruleId) throw new Error('playbook_manage delete requiere ruleId (o whole=true para el playbook completo)');
-    if (lang === 'project' || lang === 'local') {
+    if (lang === 'project' || lang === 'local' || args.scope === 'project') {
       const res = await storage.deleteRuleFromProject(cwd, args.ruleId);
       if (!res.deleted) return `La regla "${args.ruleId}" no existe en PROYECTO LOCAL (playbook.md).`;
       return `✓ Regla "${args.ruleId}" (${res.ruleType}) eliminada de PROYECTO LOCAL (playbook.md).`;
@@ -420,7 +423,7 @@ async function executePlaybookManage(
   }
 
   const validity = validateManageRule(rule);
-  const target = await resolveManageTarget(storage, cwd, args.language || '');
+  const target = await resolveManageTarget(storage, cwd, args.language || '', args.scope);
 
   if (!validity.valid) {
     if (args.action === 'save') {
@@ -588,6 +591,10 @@ const GentlePlaybookPlugin: OpenCodePlugin = async ({ directory, worktree }) => 
           .string()
           .optional()
           .describe("Target: language (e.g. 'go'), stack slug, 'agents', or 'project' for the local playbook.md"),
+        scope: z
+          .enum(['global', 'stack', 'agents', 'project'])
+          .optional()
+          .describe('Optional explicit routing: use scope=stack with a new slug to create a stack playbook'),
         ruleId: z.string().optional().describe('Rule id to delete (with action=delete)'),
         whole: z.boolean().optional().describe('Delete the whole playbook (with action=delete)'),
         rule: z

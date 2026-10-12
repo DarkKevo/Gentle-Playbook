@@ -65,12 +65,14 @@ with pre-flight, write-barrier enforcement, and on-demand consultation.
   validateRuleContent before persisting (never silently dropped by the storage
   sanitizer — the T2 gotcha became a feature); deletes support global/stack/agents/
   project targets; whole-playbook delete refuses project (edit playbook.md directly).
-- [ ] Task 4: Command templates (Spanish, repo convention) in
+- [x] Task 4: Command templates (Spanish, repo convention) in
   `src/opencode-commands/`: `playbook.md` (list/show/inspect),
   `playbook-add.md` (agent-mediated add wizard using playbook_manage),
   `playbook-extract.md` (agent-mediated essence extraction + 1-a-1 triage),
   `playbook-stack.md` (stack management guidance),
-  `playbook-delete.md` (agent-mediated delete wizard).
+  `playbook-delete.md` (agent-mediated delete wizard). — Includes the
+  `scope` arg on playbook_manage (scope=stack with a new slug creates the
+  stack playbook) and 9 template-contract tests.
 - [ ] Task 5: Build & installer. Single-file esbuild bundle of the OpenCode entry
   (`dist/opencode.js`), `install.sh` gains an OpenCode path: copy bundle to
   `~/.config/opencode/plugins/gentle-playbook.js` and command templates to
