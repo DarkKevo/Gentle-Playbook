@@ -69,4 +69,10 @@ describe('OpenCode command templates', () => {
       ).not.toBeNull();
     }
   });
+
+  it('/playbook-add synthesis step names the mandatory rule.type field (zod enum)', async () => {
+    const raw = await fs.readFile(path.join(COMMANDS_DIR, 'playbook-add.md'), 'utf-8');
+    expect(raw).toContain('`type`');
+    expect(raw).toContain('"invariant" | "ask" | "never"');
+  });
 });
