@@ -197,6 +197,7 @@ describe('OpenCode plugin entry v2 (adapter twin)', () => {
       const harness = await setupPlugin(workDir);
       expect(harness.reloadCalls).toBeGreaterThanOrEqual(1);
       expect([...harness.tools.keys()].sort()).toEqual(['playbook_consult', 'playbook_manage']);
+    });
   });
 
   describe('playbook_consult tool', () => {
