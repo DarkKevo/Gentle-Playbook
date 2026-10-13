@@ -1217,9 +1217,16 @@ export default function (pi: ExtensionAPI) {
       // disparadas para todas las capas activas (misma entrada, mismo orden).
       const evaluation = await evaluateWorkspacePrompt(promptText, playbooksToCheck);
 
-      for (const { playbook: pb, violation } of evaluation.violations) {
-        const pbName = playbookDisplayName(pb);
-        const ruleId = violation.rule.id.toUpperCase();
+      const violationByPlaybook = new Map(evaluation.violations.map((entry) => [entry.playbook, entry.violation]));
+      const askByPlaybook = new Map(evaluation.asks.map((entry) => [entry.playbook, entry.ask]));
+
+      // Paridad con el handler Pi del baseline: las capas se procesan una a una,
+      // en orden de capa, y dentro de cada capa la violación va antes que el ASK.
+      for (const pb of playbooksToCheck) {
+        const violation = violationByPlaybook.get(pb);
+        if (violation) {
+          const pbName = playbookDisplayName(pb);
+          const ruleId = violation.rule.id.toUpperCase();
 
         // Caso 1: Intento explícito de eludir checkpoints o apagar el playbook
         if (isBypassViolation(violation)) {
@@ -1279,14 +1286,16 @@ export default function (pi: ExtensionAPI) {
             event.text = `${event.text}\n\n${buildHeadlessRedirectDirective(promptText, ruleId, violation.reason, targetSurface)}`;
           }
         }
-      }
+        continue;
+        }
 
-      for (const { playbook: pb, ask: askMatch } of evaluation.asks) {
+        const askMatch = askByPlaybook.get(pb);
+        if (!askMatch) continue;
         const askId = askMatch.rule.id.toUpperCase();
         if (ctx.ui?.confirm) {
           const askTitle = askMatch.rule.title ? ` - ${askMatch.rule.title}` : '';
           const applyExtra = await ctx.ui.confirm(
-            `💡 Playbook (${playbookDisplayName(pb)}): [ASK:${askId}]${askTitle}`,
+            `💡 Playbook (${pb.language.toUpperCase()}): [ASK:${askId}]${askTitle}`,
             `${askMatch.prompt}\n\n(Default: ${askMatch.defaultAction})`
           );
           if (applyExtra) {
