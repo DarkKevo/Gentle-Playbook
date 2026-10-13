@@ -459,6 +459,10 @@ function playbookConsultTool(cwd: () => string, storage: PlaybookStorage) {
 
   return {
     name: 'playbook_consult',
+    // Direct-callable por el modelo: sin esto la tool cae en el catálogo de
+    // Code Mode (solo accesible via `execute`) y el primer llamado directo
+    // falla con "no tool named ..." (anomalyco/opencode#50312).
+    options: { codemode: false },
     // Herramienta on-demand compartida con Pi: mismos datos pasivos de
     // referencia, sin inyección en system prompt.
     description:
@@ -540,6 +544,7 @@ function playbookConsultTool(cwd: () => string, storage: PlaybookStorage) {
 function playbookManageTool(cwd: () => string, storage: PlaybookStorage) {
   return {
     name: 'playbook_manage',
+    options: { codemode: false },
     // Mutaciones agente-mediadas: el agente sintetiza la regla conversando
     // con el usuario, muestra el preview, confirma y persiste. Reemplaza los
     // wizards interactivos de Pi (OpenCode no expone UI a plugins).

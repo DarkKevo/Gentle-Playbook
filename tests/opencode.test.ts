@@ -212,6 +212,14 @@ describe('OpenCode plugin entry v2 (adapter twin)', () => {
       expect(schema.safeParse({}).success).toBe(true);
     });
 
+    it('marks both tools as direct-callable (codemode: false) so fresh-session direct calls do not fail', async () => {
+      const harness = await setupPlugin(workDir);
+      for (const name of ['playbook_consult', 'playbook_manage']) {
+        const tool = harness.tools.get(name);
+        expect(tool?.options).toEqual({ codemode: false });
+      }
+    });
+
     it('serves the full workspace hierarchy when no language is given', async () => {
       const harness = await setupPlugin(workDir);
       const result = await harness.tools.get('playbook_consult')!.execute({},
