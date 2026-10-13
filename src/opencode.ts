@@ -574,6 +574,11 @@ export default Plugin.define({
       })
     );
 
+    // OpenCode v2 refresca el catálogo de tools solo bajo demanda: sin este
+    // reload el primer turno no ve playbook_consult/playbook_manage
+    // (observado en vivo: "no tool named ..." en el primer turno y OK después).
+    await ctx.tool.reload();
+
     // Puntero liviano en system prompt: mismo texto que Pi inyecta en
     // systemPromptOptions.sections.playbook_guidance. En v2 el hook
     // "context" corre por request con el array SystemPart mutable.

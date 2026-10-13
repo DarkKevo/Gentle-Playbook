@@ -88,6 +88,7 @@ async function setupPlugin(directory: string) {
   const tools = new Map<string, StubTool>();
   const sessionHooks = new Map<string, HookHandler[]>();
   const toolHooks = new Map<string, HookHandler[]>();
+  let reloadCalls = 0;
 
   const register = (map: Map<string, HookHandler[]>, name: string, cb: HookHandler) => {
     const handlers = map.get(name) ?? [];
@@ -111,7 +112,9 @@ async function setupPlugin(directory: string) {
         return { dispose: async () => {} };
       },
       list: async () => [...tools.values()],
-      reload: async () => {},
+      reload: async () => {
+        reloadCalls++;
+      },
       hook: (name: string, cb: HookHandler) => register(toolHooks, name, cb),
     },
     session: {
@@ -127,6 +130,9 @@ async function setupPlugin(directory: string) {
 
   return {
     tools,
+    get reloadCalls() {
+      return reloadCalls;
+    },
     hookNames: {
       session: [...sessionHooks.keys()],
       tool: [...toolHooks.keys()],
@@ -186,6 +192,11 @@ describe('OpenCode plugin entry v2 (adapter twin)', () => {
       expect(harness.hookNames.session.sort()).toEqual(['compaction', 'context', 'prompt']);
       expect(harness.hookNames.tool).toEqual(['execute.before']);
     });
+
+    it('reloads the tool catalog after registering via transform (first-turn visibility)', async () => {
+      const harness = await setupPlugin(workDir);
+      expect(harness.reloadCalls).toBeGreaterThanOrEqual(1);
+      expect([...harness.tools.keys()].sort()).toEqual(['playbook_consult', 'playbook_manage']);
   });
 
   describe('playbook_consult tool', () => {
