@@ -14,6 +14,13 @@ import { AGENTS_PREFERENCES_ID } from '../src/core/schema.js';
  *   3. save/delete → persistencia real
  */
 
+/** Extrae el texto del Tool.Result v2 ({ content }). */
+function resultText(result: unknown): string {
+  if (typeof result === 'string') return result;
+  const r = result as { content?: unknown };
+  return typeof r?.content === 'string' ? r.content : String(r?.content ?? '');
+}
+
 function toolCtx(workDir: string) {
   return {
     directory: workDir,
@@ -22,6 +29,35 @@ function toolCtx(workDir: string) {
     messageID: 'm1',
     agent: 'build',
   };
+}
+
+// Harness stub mínimo del contrato v2: registra las tools vía ctx.tool.transform.
+async function setupPluginTools(directory: string) {
+  const tools = new Map<string, { name: string; description: string; input: unknown; execute(args: any, ctx?: any): Promise<any> }>();
+  const ctx = {
+    location: { directory },
+    tool: {
+      transform: async (callback: (editor: unknown) => void) => {
+        callback({
+          list: () => [],
+          get: () => undefined,
+          namespace: () => {},
+          add: (tool: any) => tools.set(tool.name, tool),
+          update: () => {},
+          remove: () => {},
+        });
+        return { dispose: async () => {} };
+      },
+      list: async () => [...tools.values()],
+      reload: async () => {},
+      hook: async () => ({ dispose: async () => {} }),
+    },
+    session: {
+      hook: async () => ({ dispose: async () => {} }),
+    },
+  };
+  await GentlePlaybookPlugin.setup(ctx as never);
+  return tools;
 }
 
 describe('playbook_manage tool (agent-mediated mutations)', () => {
@@ -66,13 +102,14 @@ describe('playbook_manage tool (agent-mediated mutations)', () => {
   });
 
   async function manageTool() {
-    const hooks = await GentlePlaybookPlugin({
-      directory: workDir,
-      worktree: workDir,
-      client: {},
-      $: {},
-    } as any);
-    return (hooks as any).tool.playbook_manage;
+    const tool = (await setupPluginTools(workDir)).get('playbook_manage')!;
+    // Firma v2: execute(args) (el contexto v2 no trae directory; la ubicación
+    // viene del setup). Se tolera el segundo parámetro del toolCtx histórico.
+    return {
+      description: tool.description,
+      input: tool.input,
+      execute: (...all: any[]) => tool.execute(all[0]),
+    };
   }
 
   const goRule = {
@@ -88,9 +125,10 @@ describe('playbook_manage tool (agent-mediated mutations)', () => {
     expect(manage).toBeDefined();
     expect(manage.description).toContain('preview');
     expect(manage.description).toContain('save');
-    expect(manage.args?.action).toBeDefined();
-    expect(manage.args?.language).toBeDefined();
-    expect(manage.args?.rule).toBeDefined();
+    // Input schema v2 (Standard Schema / zod): valida action y rule.
+    const schema = manage.input as { safeParse(v: unknown): { success: boolean } };
+    expect(schema.safeParse({ action: 'preview', rule: goRule }).success).toBe(true);
+    expect(schema.safeParse({ action: 'nope' }).success).toBe(false);
   });
 
   describe('action=preview', () => {
@@ -103,7 +141,7 @@ describe('playbook_manage tool (agent-mediated mutations)', () => {
         { action: 'preview', language: 'go', rule: goRule },
         toolCtx(workDir)
       );
-      const text = typeof result === 'string' ? result : result?.output;
+      const text = resultText(result);
       expect(text).toContain('ports-interfaces');
       expect(text).toContain('INVARIANT');
 
@@ -146,7 +184,7 @@ describe('playbook_manage tool (agent-mediated mutations)', () => {
         { action: 'preview', language: 'go', rule: colliding },
         toolCtx(workDir)
       );
-      const text = typeof result === 'string' ? result : result?.output;
+      const text = resultText(result);
       expect(text.toLowerCase()).toContain('colision');
     });
 
@@ -167,7 +205,7 @@ describe('playbook_manage tool (agent-mediated mutations)', () => {
         },
         toolCtx(workDir)
       );
-      const text = typeof result === 'string' ? result : result?.output;
+      const text = resultText(result);
       expect(text.toLowerCase()).toContain('title');
       expect(text).toContain('INVALIDO');
 
@@ -184,7 +222,7 @@ describe('playbook_manage tool (agent-mediated mutations)', () => {
         { action: 'preview', language: 'python', rule: { ...goRule, id: 'py-rule', surface: 'src/' } },
         toolCtx(workDir)
       );
-      const text = typeof result === 'string' ? result : result?.output;
+      const text = resultText(result);
       expect(text).toContain('nuevo playbook');
     });
   });
@@ -196,7 +234,7 @@ describe('playbook_manage tool (agent-mediated mutations)', () => {
         { action: 'save', language: 'go', rule: goRule },
         toolCtx(workDir)
       );
-      const text = typeof result === 'string' ? result : result?.output;
+      const text = resultText(result);
       expect(text).toContain('✓');
 
       const pb = await storage.getPlaybook('go');
@@ -281,7 +319,7 @@ describe('playbook_manage tool (agent-mediated mutations)', () => {
         },
         toolCtx(workDir)
       );
-      const text = typeof result === 'string' ? result : result?.output;
+      const text = resultText(result);
       expect(text).toContain('STACK GO-GIN');
       const stack = await storage.getStack('go-gin');
       expect(stack?.neverRules?.some((n) => n.id === 'never-gin')).toBe(true);
@@ -345,7 +383,7 @@ describe('playbook_manage tool (agent-mediated mutations)', () => {
         { action: 'delete', language: 'go', ruleId: 'canonical-http' },
         toolCtx(workDir)
       );
-      const text = typeof result === 'string' ? result : result?.output;
+      const text = resultText(result);
       expect(text).toContain('✓');
       const pb = await storage.getPlaybook('go');
       expect(pb?.invariants.some((i) => i.id === 'canonical-http')).toBe(false);
@@ -357,7 +395,7 @@ describe('playbook_manage tool (agent-mediated mutations)', () => {
         { action: 'delete', language: 'go', ruleId: 'no-existe' },
         toolCtx(workDir)
       );
-      const text = typeof result === 'string' ? result : result?.output;
+      const text = resultText(result);
       expect(text.toLowerCase()).toContain('no');
     });
 
@@ -367,7 +405,7 @@ describe('playbook_manage tool (agent-mediated mutations)', () => {
         { action: 'delete', language: 'go', whole: true },
         toolCtx(workDir)
       );
-      const text = typeof result === 'string' ? result : result?.output;
+      const text = resultText(result);
       expect(text).toContain('✓');
       expect(await storage.exists('go')).toBe(false);
     });

@@ -1,21 +1,29 @@
-// Entrada del plugin para OpenCode: adapter twin de la extensión Pi.
+// Entrada del plugin para OpenCode 2.x: adapter twin de la extensión Pi,
+// portado al contrato v2 de @opencode/plugin (Plugin.define({ id, setup })).
 //
-// Contrato de hooks de @opencode-ai/plugin (declarado estructuralmente, sin
-// dependencia del paquete — mismo patrón que ExtensionAPI en index.ts):
-//   - tool: { [nombre]: { description, args (zod raw shape), execute } }
-//   - "experimental.chat.system.transform": agrega el puntero de playbook_consult
-//   - "chat.message": pre-vuelo determinístico; muta el text part in-place
-//     (OpenCode no permite cancelar el mensaje: los intentos de bypass quedan
-//     visibles como directiva y la barrera de herramientas mantiene el bloqueo)
-//   - "tool.execute.before": barrera de escritura fail-closed (throw = bloqueo,
-//     patrón probado por los plugins de gentle-ai para OpenCode)
-//   - "experimental.session.compacting": inyecta las normas activas como
-//     contexto de compactación (exclusivo de OpenCode; Pi no lo necesita)
+// Mapeo de hooks v1 → v2 (semántica preservada byte a byte en los textos):
+//   - Herramientas: v1 `tool: { [nombre]: {...} }` → v2 `ctx.tool.transform`
+//     con `editor.add({ name, input (Standard Schema / zod), execute })`
+//   - v1 "experimental.chat.system.transform" → v2 `ctx.session.hook("context")`:
+//     agrega el puntero de playbook_consult al array SystemPart de la request
+//   - v1 "chat.message" → v2 `ctx.session.hook("prompt")`: pre-vuelo
+//     determinístico; muta `prompt.text` in-place (en v2 el prompt ya es texto
+//     plano mutable, sin parts; OpenCode tampoco permite cancelar el mensaje:
+//     los intentos de bypass quedan visibles como directiva y la barrera de
+//     herramientas mantiene el bloqueo)
+//   - v1 "tool.execute.before" → v2 `ctx.tool.hook("execute.before")`: barrera
+//     de escritura fail-closed (throw = bloqueo, patrón probado por los
+//     plugins de gentle-ai para OpenCode)
+//   - v1 "experimental.session.compacting" → v2 `ctx.session.hook("compaction")`:
+//     inyecta las normas activas como contexto del request de compactación
+//     (exclusivo de OpenCode; Pi no lo necesita)
 //
 // Toda la lógica de decisión y los textos provienen de core/governance.ts,
 // compartida con la extensión Pi: paridad de enforcement byte a byte.
+// El módulo de gobernanza NO cambia: este archivo es solo transporte.
 
 import * as z from 'zod';
+import { Plugin } from '@opencode/plugin';
 import { PlaybookStorage } from './core/storage.js';
 import {
   formatPlaybookForTool,
@@ -47,90 +55,11 @@ import {
 } from './core/governance.js';
 
 // ---------------------------------------------------------------------------
-// Tipos estructurales del contrato de OpenCode (sin importar el paquete)
-// ---------------------------------------------------------------------------
-
-export interface OpenCodePluginInput {
-  project?: unknown;
-  client?: unknown;
-  $?: unknown;
-  serverUrl?: unknown;
-  directory: string;
-  worktree: string;
-}
-
-export interface OpenCodeToolContext {
-  sessionID?: string;
-  messageID?: string;
-  agent?: string;
-  directory: string;
-  worktree: string;
-  abort?: AbortSignal;
-  metadata?(input: { title?: string; metadata?: Record<string, unknown> }): void;
-}
-
-export type OpenCodeToolResult =
-  | string
-  | { title?: string; output: string; metadata?: Record<string, unknown> };
-
-export interface OpenCodeToolDefinition {
-  description: string;
-  args: Record<string, z.ZodTypeAny>;
-  execute(args: Record<string, unknown>, context: OpenCodeToolContext): Promise<OpenCodeToolResult>;
-}
-
-export interface OpenCodeHooks {
-  tool?: Record<string, OpenCodeToolDefinition>;
-  'chat.message'?(
-    input: { sessionID: string; agent?: string },
-    output: { message: Record<string, unknown>; parts: Array<Record<string, unknown>> }
-  ): Promise<void>;
-  'tool.execute.before'(
-    input: { tool: string; sessionID: string; callID: string },
-    output: { args: Record<string, unknown> }
-  ): Promise<void>;
-  'experimental.chat.system.transform'(
-    input: { sessionID?: string },
-    output: { system: string[] }
-  ): Promise<void>;
-  'experimental.session.compacting'(
-    input: { sessionID: string },
-    output: { context: string[]; prompt?: string }
-  ): Promise<void>;
-}
-
-export type OpenCodePlugin = (input: OpenCodePluginInput) => Promise<OpenCodeHooks>;
-
-// ---------------------------------------------------------------------------
 // Utilidades de adaptación
 // ---------------------------------------------------------------------------
 
 /** Herramientas de OpenCode que escriben archivos en disco. */
 const FILE_WRITE_TOOLS = new Set(['write', 'edit', 'patch']);
-
-/** Extrae el texto plano de los text parts del mensaje del usuario. */
-function extractPartsText(parts: Array<Record<string, unknown>>): string {
-  if (!Array.isArray(parts)) return '';
-  return parts
-    .filter((p) => p && p.type === 'text' && typeof p.text === 'string')
-    .map((p) => p.text as string)
-    .join('\n');
-}
-
-/**
- * Agrega la directiva al primer text part mutándolo in-place. Evita pushear
- * parts nuevas al arreglo (intermitentemente reportado por opencode#23440).
- * Si no existe ningún text part, hace un push de mejor esfuerzo.
- */
-function appendDirectiveToParts(parts: Array<Record<string, unknown>>, directiveBlock: string): void {
-  if (!Array.isArray(parts)) return;
-  const firstText = parts.find((p) => p && p.type === 'text' && typeof p.text === 'string');
-  if (firstText) {
-    firstText.text = `${firstText.text as string}\n\n${directiveBlock}`;
-    return;
-  }
-  parts.push({ type: 'text', text: directiveBlock });
-}
 
 /** Extrae la ruta objetivo de los args de una herramienta de escritura. */
 function extractTargetPath(args: Record<string, unknown> | undefined): string {
@@ -480,39 +409,65 @@ async function executePlaybookManage(
 // Plugin
 // ---------------------------------------------------------------------------
 
-const GentlePlaybookPlugin: OpenCodePlugin = async ({ directory, worktree }) => {
-  const storage = new PlaybookStorage();
-  const cwd = () => worktree || directory;
+const consultInputSchema = z.object({
+  language: z
+    .string()
+    .optional()
+    .describe(
+      "Target language (e.g. 'go', 'typescript', 'python') or 'agents' for agent supervision preferences. Defaults to auto-detected workspace language."
+    ),
+  surface: z
+    .string()
+    .optional()
+    .describe(
+      "Optional filter for rules affecting a specific surface or file path (e.g. 'internal/ports', 'tools:write', 'git:push')."
+    ),
+});
 
+const manageRuleSchema = z.object({
+  type: z.enum(['invariant', 'ask', 'never']),
+  id: z.string().min(1),
+  title: z.string().optional(),
+  surface: z.string().optional(),
+  description: z.string().min(1),
+  trigger: z.string().optional(),
+  antiTrigger: z.string().optional(),
+  prompt: z.string().optional(),
+  defaultAction: z.string().optional(),
+  reason: z.string().optional(),
+});
+
+const manageInputSchema = z.object({
+  action: z.enum(['preview', 'save', 'delete']).describe('preview (no disk write), save (persist), delete'),
+  language: z
+    .string()
+    .optional()
+    .describe("Target: language (e.g. 'go'), stack slug, 'agents', or 'project' for the local playbook.md"),
+  scope: z
+    .enum(['global', 'stack', 'agents', 'project'])
+    .optional()
+    .describe('Optional explicit routing: use scope=stack with a new slug to create a stack playbook'),
+  ruleId: z.string().optional().describe('Rule id to delete (with action=delete)'),
+  whole: z.boolean().optional().describe('Delete the whole playbook (with action=delete)'),
+  rule: manageRuleSchema.optional().describe('The synthesized rule (required for preview/save)'),
+});
+
+/** Crea la herramienta playbook_consult como Tool.Info v2 (execute retorna Tool.Result). */
+function playbookConsultTool(cwd: () => string, storage: PlaybookStorage) {
   /** Jerarquía completa del workspace (Local > Stack > Global > Agente). */
   const activeHierarchy = () => getActiveWorkspacePlaybooks(cwd(), storage);
 
-  /** Capas activas con enmascaramiento local por superficie (para enforcement). */
-  const activeMasked = async () => maskSubordinatePlaybooks(await activeHierarchy());
-
   return {
+    name: 'playbook_consult',
     // Herramienta on-demand compartida con Pi: mismos datos pasivos de
     // referencia, sin inyección en system prompt.
-    tool: {
-      playbook_consult: {
-        description:
-          'Consult architectural conventions, topology constraints, coding invariants, conditional asks, prohibitions, and agent supervision preferences for the project or language. Returns passive reference data without system prompt injection.',
-        args: {
-          language: z
-            .string()
-            .optional()
-            .describe(
-              "Target language (e.g. 'go', 'typescript', 'python') or 'agents' for agent supervision preferences. Defaults to auto-detected workspace language."
-            ),
-          surface: z
-            .string()
-            .optional()
-            .describe(
-              "Optional filter for rules affecting a specific surface or file path (e.g. 'internal/ports', 'tools:write', 'git:push')."
-            ),
-        },
-        async execute(args, context) {
-          const consultCwd = context.worktree || context.directory || cwd();
+    description:
+      'Consult architectural conventions, topology constraints, coding invariants, conditional asks, prohibitions, and agent supervision preferences for the project or language. Returns passive reference data without system prompt injection.',
+    input: consultInputSchema,
+    async execute(args: z.infer<typeof consultInputSchema>) {
+      // En v2 el ToolContext no trae directory/worktree: la ubicación vive en
+      // ctx.location del setup (equivalente al input.directory de v1).
+      const consultCwd = cwd();
           const targetLang = typeof args.language === 'string' ? args.language.trim().toLowerCase() : undefined;
           const surfaceFilter = typeof args.surface === 'string' ? args.surface.trim() : undefined;
 
@@ -576,151 +531,167 @@ const GentlePlaybookPlugin: OpenCodePlugin = async ({ directory, worktree }) => 
             }
           }
 
-          return results.join('\n\n---\n\n');
-        },
-      },
-      // Mutaciones agente-mediadas: el agente sintetiza la regla conversando
-    // con el usuario, muestra el preview, confirma y persiste. Reemplaza los
-    // wizards interactivos de Pi (OpenCode no expone UI a plugins).
-    playbook_manage: {
-      description:
-        'Preview, save, or delete architectural rules and playbooks. Two-phase flow: action=preview validates the rule content (injection filter), checks collisions across active layers, and returns a preview WITHOUT writing to disk; then the agent asks the user for confirmation and calls action=save with the same arguments to persist. action=delete removes a rule by ruleId or a whole playbook with whole=true. Target language accepts a global language (go, typescript...), a stack slug, "agents", or "project" for the local playbook.md.',
-      args: {
-        action: z.enum(['preview', 'save', 'delete']).describe('preview (no disk write), save (persist), delete'),
-        language: z
-          .string()
-          .optional()
-          .describe("Target: language (e.g. 'go'), stack slug, 'agents', or 'project' for the local playbook.md"),
-        scope: z
-          .enum(['global', 'stack', 'agents', 'project'])
-          .optional()
-          .describe('Optional explicit routing: use scope=stack with a new slug to create a stack playbook'),
-        ruleId: z.string().optional().describe('Rule id to delete (with action=delete)'),
-        whole: z.boolean().optional().describe('Delete the whole playbook (with action=delete)'),
-        rule: z
-          .object({
-            type: z.enum(['invariant', 'ask', 'never']),
-            id: z.string().min(1),
-            title: z.string().optional(),
-            surface: z.string().optional(),
-            description: z.string().min(1),
-            trigger: z.string().optional(),
-            antiTrigger: z.string().optional(),
-            prompt: z.string().optional(),
-            defaultAction: z.string().optional(),
-            reason: z.string().optional(),
-          })
-          .optional()
-          .describe('The synthesized rule (required for preview/save)'),
-      },
-      async execute(args, context) {
-        const manageCwd = context.worktree || context.directory || cwd();
-        return executePlaybookManage(storage, manageCwd, args as never);
-      },
-    },
-    },
-
-    // Puntero liviano en system prompt: mismo texto que Pi inyecta en
-    // systemPromptOptions.sections.playbook_guidance.
-    'experimental.chat.system.transform': async (_input, output) => {
-      const pbs = await activeHierarchy();
-      if (pbs.length === 0) return;
-      output.system.push(buildSystemGuidance(pbs));
-    },
-
-    // Pre-vuelo determinístico del prompt. OpenCode no permite cancelar el
-    // mensaje desde un plugin: cada conflicto queda como directiva visible y
-    // el enforcement real vive en la barrera de herramientas.
-    'chat.message': async (_input, output) => {
-      try {
-        const promptText = extractPartsText(output.parts as Array<Record<string, unknown>>);
-        if (!promptText.trim()) return;
-
-        const pbs = await activeMasked();
-        if (pbs.length === 0) return;
-
-        // Evaluación compartida runtime-agnostic (<1ms, sin llamadas a LLM).
-        const evaluation = await evaluateWorkspacePrompt(promptText, pbs);
-
-        const directives: string[] = [];
-        for (const { violation } of evaluation.violations) {
-          const ruleId = violation.rule.id.toUpperCase();
-          if (isBypassViolation(violation)) {
-            directives.push(buildBypassGovernanceDirective(ruleId, violation.reason));
-          } else {
-            const targetSurface =
-              (violation.rule as { surface?: string }).surface || 'la superficie canónica del playbook';
-            directives.push(buildHeadlessRedirectDirective(promptText, ruleId, violation.reason, targetSurface));
-          }
-        }
-        for (const { ask } of evaluation.asks) {
-          directives.push(buildAskDefaultDirective(promptText, ask.rule.id.toUpperCase(), ask.defaultAction));
-        }
-
-        if (directives.length > 0) {
-          appendDirectiveToParts(output.parts as Array<Record<string, unknown>>, directives.join('\n\n'));
-        }
-      } catch {
-        // Paridad con el input hook de Pi: ante error interno no se altera el
-        // mensaje; la barrera de herramientas sigue protegiendo las escrituras.
-      }
-    },
-
-    // Barrera de escritura fail-closed: throw = bloqueo.
-    'tool.execute.before': async (input, output) => {
-      if (!FILE_WRITE_TOOLS.has(input.tool)) return;
-
-      const targetPath = extractTargetPath(output.args);
-      if (!targetPath.trim()) return;
-
-      try {
-        const pbs = await activeMasked();
-        const agentPrefs = await storage.getAgentPreferences();
-
-        // Preferencias de agente: never bloquea terminante; ask e invariants
-        // exigen autorización interactiva que OpenCode no expone a plugins,
-        // por lo que aplican la política determinística headless (fail-closed).
-        if (agentPrefs) {
-          for (const never of agentPrefs.neverRules || []) {
-            if (matchesAgentToolSurface(never.surface, input.tool)) {
-              throw new Error(buildAgentNeverBlockReason(never));
-            }
-          }
-          for (const ask of agentPrefs.askRules || []) {
-            if (matchesAgentToolSurface(ask.surface, input.tool)) {
-              throw new Error(buildAgentAskHeadlessBlockReason(ask));
-            }
-          }
-          for (const inv of agentPrefs.invariants || []) {
-            if (matchesAgentToolSurface(inv.surface, input.tool)) {
-              throw new Error(buildAgentInvariantHeadlessBlockReason(inv, input.tool));
-            }
-          }
-        }
-
-        for (const pb of pbs) {
-          const pathViolation = checkPathViolation(targetPath, pb, cwd());
-          if (pathViolation) {
-            throw new Error(buildPathViolationBlockReason(targetPath, pathViolation as never));
-          }
-        }
-      } catch (err) {
-        // Fail-closed: cualquier error bloquea. Los bloqueos de gobernanza se
-        // reenvían con su razón exacta; los errores internos se envuelven.
-        const message = err instanceof Error ? err.message : String(err);
-        if (message.startsWith('Operación bloqueada')) throw err;
-        throw new Error(`Error interno en la barrera de gobernanza: ${message}`);
-      }
-    },
-
-    // Exclusivo de OpenCode: las normas activas sobreviven a la compactación
-    // como contexto del resumen de continuación.
-    'experimental.session.compacting': async (_input, output) => {
-      const pbs = await activeHierarchy();
-      if (pbs.length === 0) return;
-      output.context.push(buildSystemGuidance(pbs));
+      return { content: results.join('\n\n---\n\n') };
     },
   };
-};
+}
 
-export default GentlePlaybookPlugin;
+/** Crea la herramienta playbook_manage como Tool.Info v2 (execute retorna Tool.Result). */
+function playbookManageTool(cwd: () => string, storage: PlaybookStorage) {
+  return {
+    name: 'playbook_manage',
+    // Mutaciones agente-mediadas: el agente sintetiza la regla conversando
+    // con el usuario, muestra el preview, confirma y persiste. Reemplaza los
+    // wizards interactivos de Pi (OpenCode no expone UI a plugins).
+    description:
+      'Preview, save, or delete architectural rules and playbooks. Two-phase flow: action=preview validates the rule content (injection filter), checks collisions across active layers, and returns a preview WITHOUT writing to disk; then the agent asks the user for confirmation and calls action=save with the same arguments to persist. action=delete removes a rule by ruleId or a whole playbook with whole=true. Target language accepts a global language (go, typescript...), a stack slug, "agents", or "project" for the local playbook.md.',
+    input: manageInputSchema,
+    async execute(args: z.infer<typeof manageInputSchema>) {
+      return { content: await executePlaybookManage(storage, cwd(), args) };
+    },
+  };
+}
+
+export default Plugin.define({
+  id: 'gentle-playbook',
+  async setup(ctx) {
+    const storage = new PlaybookStorage();
+    const cwd = () => ctx.location.directory as string;
+
+    /** Jerarquía completa del workspace (Local > Stack > Global > Agente). */
+    const activeHierarchy = () => getActiveWorkspacePlaybooks(cwd(), storage);
+
+    /** Capas activas con enmascaramiento local por superficie (para enforcement). */
+    const activeMasked = async () => maskSubordinatePlaybooks(await activeHierarchy());
+
+    const registrations: Array<{ dispose(): Promise<void> }> = [];
+
+    // Herramientas del modelo, registradas por dominio (v2: ctx.tool.transform).
+    registrations.push(
+      await ctx.tool.transform((editor) => {
+        editor.add(playbookConsultTool(cwd, storage) as never);
+        editor.add(playbookManageTool(cwd, storage) as never);
+      })
+    );
+
+    // Puntero liviano en system prompt: mismo texto que Pi inyecta en
+    // systemPromptOptions.sections.playbook_guidance. En v2 el hook
+    // "context" corre por request con el array SystemPart mutable.
+    registrations.push(
+      await ctx.session.hook('context', async (input) => {
+        const pbs = await activeHierarchy();
+        if (pbs.length === 0) return;
+        input.system.push({ type: 'text', text: buildSystemGuidance(pbs) });
+      })
+    );
+
+    // Pre-vuelo determinístico del prompt (v2: hook "prompt", texto plano
+    // mutable sobre input.prompt.text — no hay parts en el PromptInput v2, la
+    // mutación es directa). OpenCode no permite cancelar el mensaje desde un
+    // plugin: cada conflicto queda como directiva visible y el enforcement
+    // real vive en la barrera de herramientas.
+    registrations.push(
+      await ctx.session.hook('prompt', async (input) => {
+        try {
+          const promptText = input.prompt.text ?? '';
+          if (!promptText.trim()) return;
+
+          const pbs = await activeMasked();
+          if (pbs.length === 0) return;
+
+          // Evaluación compartida runtime-agnostic (<1ms, sin llamadas a LLM).
+          const evaluation = await evaluateWorkspacePrompt(promptText, pbs);
+
+          const directives: string[] = [];
+          for (const { violation } of evaluation.violations) {
+            const ruleId = violation.rule.id.toUpperCase();
+            if (isBypassViolation(violation)) {
+              directives.push(buildBypassGovernanceDirective(ruleId, violation.reason));
+            } else {
+              const targetSurface =
+                (violation.rule as { surface?: string }).surface || 'la superficie canónica del playbook';
+              directives.push(buildHeadlessRedirectDirective(promptText, ruleId, violation.reason, targetSurface));
+            }
+          }
+          for (const { ask } of evaluation.asks) {
+            directives.push(buildAskDefaultDirective(promptText, ask.rule.id.toUpperCase(), ask.defaultAction));
+          }
+
+          if (directives.length > 0) {
+            // In-place sobre el texto del prompt (mismo espíritu que la
+            // mutación in-place de v1: no reemplazar el objeto prompt).
+            input.prompt.text = `${promptText}\n\n${directives.join('\n\n')}`;
+          }
+        } catch {
+          // Paridad con el input hook de Pi: ante error interno no se altera el
+          // mensaje; la barrera de herramientas sigue protegiendo las escrituras.
+        }
+      })
+    );
+
+    // Barrera de escritura fail-closed: throw = bloqueo (v2: ctx.tool.hook
+    // "execute.before"; los args de la llamada llegan en call.input).
+    registrations.push(
+      await ctx.tool.hook('execute.before', async (call) => {
+        if (!FILE_WRITE_TOOLS.has(call.tool)) return;
+
+        const targetPath = extractTargetPath(call.input as Record<string, unknown>);
+        if (!targetPath.trim()) return;
+
+        try {
+          const pbs = await activeMasked();
+          const agentPrefs = await storage.getAgentPreferences();
+
+          // Preferencias de agente: never bloquea terminante; ask e invariants
+          // exigen autorización interactiva que OpenCode no expone a plugins,
+          // por lo que aplican la política determinística headless (fail-closed).
+          if (agentPrefs) {
+            for (const never of agentPrefs.neverRules || []) {
+              if (matchesAgentToolSurface(never.surface, call.tool)) {
+                throw new Error(buildAgentNeverBlockReason(never));
+              }
+            }
+            for (const ask of agentPrefs.askRules || []) {
+              if (matchesAgentToolSurface(ask.surface, call.tool)) {
+                throw new Error(buildAgentAskHeadlessBlockReason(ask));
+              }
+            }
+            for (const inv of agentPrefs.invariants || []) {
+              if (matchesAgentToolSurface(inv.surface, call.tool)) {
+                throw new Error(buildAgentInvariantHeadlessBlockReason(inv, call.tool));
+              }
+            }
+          }
+
+          for (const pb of pbs) {
+            const pathViolation = checkPathViolation(targetPath, pb, cwd());
+            if (pathViolation) {
+              throw new Error(buildPathViolationBlockReason(targetPath, pathViolation as never));
+            }
+          }
+        } catch (err) {
+          // Fail-closed: cualquier error bloquea. Los bloqueos de gobernanza se
+          // reenvían con su razón exacta; los errores internos se envuelven.
+          const message = err instanceof Error ? err.message : String(err);
+          if (message.startsWith('Operación bloqueada')) throw err;
+          throw new Error(`Error interno en la barrera de gobernanza: ${message}`);
+        }
+      })
+    );
+
+    // Exclusivo de OpenCode: las normas activas sobreviven a la compactación
+    // como contexto del request de compactación (v2: hook "compaction").
+    registrations.push(
+      await ctx.session.hook('compaction', async (input) => {
+        const pbs = await activeHierarchy();
+        if (pbs.length === 0) return;
+        input.system.push({ type: 'text', text: buildSystemGuidance(pbs) });
+      })
+    );
+
+    // Cleanup v2: libera todos los registros al descargar el plugin.
+    return async () => {
+      await Promise.all(registrations.map((r) => r.dispose()));
+    };
+  },
+});

@@ -298,14 +298,16 @@ Administrá y depurá tus normas directamente desde el TUI de Pi con asistentes 
 
 ### Arquitectura del adapter
 
-| API Pi | Equivalente OpenCode | Función |
-|---------|---------------------|----------|
-| `before_agent_start` (puntero en system prompt) | `experimental.chat.system.transform` | Directiva liviana que orienta a consultar `playbook_consult` |
-| Hook `input` (pre-vuelo) | `chat.message` | Evaluación determinística (<1ms, sin LLM) del prompt contra las capas activas |
-| Hook `tool_call` (barrera de escritura) | `tool.execute.before` | Fail-closed para `write`/`edit`/`patch`; `throw` = bloqueo |
-| `registerTool(playbook_consult)` | `tool: { playbook_consult }` (Zod) | Datos pasivos de referencia on-demand |
+El entry del plugin sigue el contrato **v2 de `@opencode/plugin`** (`@opencode/plugin@2.0.4`): el bundle exporta por default el objeto `Plugin.define({ id: "gentle-playbook", setup(ctx) })` y registra todo por dominio (`ctx.session.hook`, `ctx.tool.hook`, `ctx.tool.transform`).
+
+| API Pi | Equivalente OpenCode 2.x | Función |
+|---------|--------------------------|----------|
+| `before_agent_start` (puntero en system prompt) | `ctx.session.hook("context")` (SystemPart por request) | Directiva liviana que orienta a consultar `playbook_consult` |
+| Hook `input` (pre-vuelo) | `ctx.session.hook("prompt")` (muta `prompt.text` in-place) | Evaluación determinística (<1ms, sin LLM) del prompt contra las capas activas |
+| Hook `tool_call` (barrera de escritura) | `ctx.tool.hook("execute.before")` (args en `call.input`) | Fail-closed para `write`/`edit`/`patch`; `throw` = bloqueo |
+| `registerTool(playbook_consult)` | `ctx.tool.transform` → `editor.add({ name: "playbook_consult", input: zod })` | Datos pasivos de referencia on-demand |
 | Wizards TUI (`/playbook add`...) | Comandos markdown + `playbook_manage` | Flujos **agente-mediados**: el agente pregunta, la tool ejecuta |
-| — (exclusivo de OpenCode) | `experimental.session.compacting` | Las normas activas sobreviven a la compactación |
+| — (exclusivo de OpenCode) | `ctx.session.hook("compaction")` | Las normas activas sobreviven a la compactación |
 
 ### Diferencias de runtime (por diseño)
 
@@ -330,9 +332,11 @@ Las tools del modelo (`playbook_consult`, `playbook_manage`) también están dis
 El `install.sh` detecta OpenCode automáticamente (binario o `~/.config/opencode` existente), compila el bundle single-file y lo instala:
 
 ```text
-~/.config/opencode/plugins/gentle-playbook.js   (bundle ESM, zod incluido)
+~/.config/opencode/plugins/gentle-playbook.js   (bundle ESM: export default = { id, setup }; zod incluido, @opencode/plugin como peer del runtime)
 ~/.config/opencode/command/playbook*.md          (5 comandos)
 ```
+
+Requiere **OpenCode 2.0.x** (contrato v2 de plugins). El bundle carga como módulo ESM: `import` del archivo devuelve un objeto `default` con `id: "gentle-playbook"` y una función `setup(ctx)`.
 
 Si instalaste OpenCode después de gentle-playbook, re-ejecutá el install.
 
