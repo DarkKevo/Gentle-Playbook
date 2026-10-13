@@ -22,10 +22,9 @@ Conducí un wizard conversacional con el usuario para capturar y guardar una reg
    - `never` (Prohibición): veto terminante. Para prohibiciones, consultá el alcance: **específica** (solo el elemento nombrado), **categórica** (el elemento y cualquier alternativa similar, exigiendo stdlib) o **personalizada** (el usuario detalla límites/ excepciones).
 
 4. **Síntesis:** Estructurá la regla con estos campos:
-   - `type`: siempre uno de `"invariant" | "ask" | "never"` (obligatorio; el schema lo rechaza si falta)
+   - `type`: siempre uno de `"invariant" | "ask" | "never"`, el tipo confirmado en el paso 3 (obligatorio; el schema lo rechaza si falta)
    - `id`: kebab-case corto y estable (ej: `http-handlers-ports`)
    - `title`: título descriptivo
-   - `type`: el tipo confirmado en el paso 3 (`invariant`, `ask` o `never`) — el schema lo exige
    - `surface`: superficie canónica donde aplica (ej: `internal/adapters/http/`, `tools:write`, `general` para vetos tecnológicos)
    - `description`: la regla completa y autocontenida
    - Para `never`: `reason` (el motivo arquitectónico)
