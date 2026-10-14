@@ -348,11 +348,16 @@ export async function checkAndResolveMultiStackConflicts(
           });
 
           if (ctx.ui?.select) {
+            const truncate = (s: string, max = 80) =>
+              s.length > max ? s.slice(0, max - 3) + '...' : s;
+            const descA = rA.description || rA.title;
+            const descB = rB.description || rB.title;
+
             const choice = await ctx.ui.select(
               `Conflicto en superficie \`${rA.surface}\`: ¿Cuál regla deseas aterrizar en playbook.md?`,
               [
-                `1. Adoptar regla de [${sA.stackId}]`,
-                `2. Adoptar regla de [${sB.stackId}]`,
+                `1. Adoptar [${sA.stackId}]: "${truncate(descA)}"`,
+                `2. Adoptar [${sB.stackId}]: "${truncate(descB)}"`,
                 `3. Redactar una regla personalizada para este proyecto`,
               ]
             );

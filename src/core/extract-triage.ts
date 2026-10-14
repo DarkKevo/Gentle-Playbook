@@ -499,11 +499,16 @@ async function resolveLayerConflictIfNeeded(
   });
 
   if (ctx.ui?.select) {
+    const existingDesc = col.rule.description || col.rule.title;
+    const incomingDesc = incomingRule.description || incomingRule.title;
+    const truncate = (s: string, max = 80) =>
+      s.length > max ? s.slice(0, max - 3) + '...' : s;
+
     const choice = await ctx.ui.select(
-      `Conflicto en ${col.scopeLabel} [${col.rule.id} vs ${incomingRule.id}]:`,
+      `Conflicto en ${col.scopeLabel} para superficie \`${incomingRule.surface}\`:`,
       [
-        `📥 1. Reemplazar existente [${col.rule.id}] por la nueva versión (adoptar extract)`,
-        `🛡️ 2. Conservar versión existente [${col.rule.id}] (descartar nueva)`,
+        `📥 1. Adoptar nueva: "${truncate(incomingDesc)}"`,
+        `🛡️ 2. Conservar existente: "${truncate(existingDesc)}"`,
       ]
     );
     if (choice?.includes('Conservar')) {

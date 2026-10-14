@@ -236,11 +236,11 @@ describe('Extract Triage 1-a-1 Wizard', () => {
       snippets: [],
     };
 
-    // Usuario elige Global, luego elige "Reemplazar"
+    // Usuario elige Global, luego elige "Adoptar nueva"
     const selectMock = vi
       .fn()
       .mockResolvedValueOnce('🌐 1. Global (Lenguaje: GO)')
-      .mockResolvedValueOnce('📥 1. Reemplazar por la nueva versión (adoptar extract)');
+      .mockResolvedValueOnce('📥 1. Adoptar nueva: "Usar gin siempre."');
 
     const mockCtx = {
       cwd: tempDir,

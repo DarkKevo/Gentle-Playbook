@@ -363,11 +363,16 @@ async function handleAddRule(
       display: true,
     });
 
+    const truncate = (s: string, max = 80) =>
+      s.length > max ? s.slice(0, max - 3) + '...' : s;
+    const newDesc = synthesized.description || synthesized.title;
+    const existDesc = c.rule.description || c.rule.title;
+
     const choice = await ctx.ui.select(
       `Conflicto en superficie \`${synthesized.surface}\` con [${c.scopeLabel}]:`,
       [
-        `📥 1. Guardar en ${targetDisplayName} de todos modos (prevalece en este ámbito)`,
-        `🛡️ 2. Conservar la regla existente de ${c.scopeLabel} (descartar la nueva)`,
+        `📥 1. Guardar nueva en ${targetDisplayName}: "${truncate(newDesc)}"`,
+        `🛡️ 2. Conservar existente de ${c.scopeLabel}: "${truncate(existDesc)}"`,
         `✏️ 3. Modificar la regla a agregar (reformular)`,
       ]
     );
