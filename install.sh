@@ -144,6 +144,20 @@ else
   echo "ℹ Pi command not found in PATH; skipping 'pi install'."
 fi
 
+# 6. Install the OpenCode plugin and commands when OpenCode is present
+if command -v opencode >/dev/null 2>&1 || [ -d "${HOME}/.config/opencode" ]; then
+  echo "🔌 Installing OpenCode plugin and commands..."
+  echo "🔨 Building the OpenCode single-file bundle..."
+  npm run build:opencode --silent
+  mkdir -p "${HOME}/.config/opencode/plugins" "${HOME}/.config/opencode/command"
+  cp "${SRC_DIR}/dist/opencode.js" "${HOME}/.config/opencode/plugins/gentle-playbook.js"
+  cp "${SRC_DIR}"/src/opencode-commands/*.md "${HOME}/.config/opencode/command/"
+  echo "✓ OpenCode plugin: ~/.config/opencode/plugins/gentle-playbook.js"
+  echo "✓ OpenCode commands: /playbook, /playbook-add, /playbook-extract, /playbook-stack, /playbook-delete"
+else
+  echo "ℹ OpenCode not detected; skipping OpenCode installation (re-run install.sh after installing OpenCode)."
+fi
+
 echo ""
 echo "=========================================="
 echo "  ✓ Installation complete!"
@@ -153,4 +167,12 @@ echo "  /playbook                  (ver playbooks activos y estado)"
 echo "  /playbook extract          (extracción agéntica asistida por IA)"
 echo "  /gentle-playbook-add       (sintetizador interactivo de reglas con IA)"
 echo "  /playbook delete           (gestión y eliminación interactiva de reglas o playbooks)"
+echo ""
+echo "Inside OpenCode (si está instalado):"
+echo "  /playbook                  (jerarquía activa del workspace)"
+echo "  /playbook-add              (wizard agente-mediado con preview y confirmación)"
+echo "  /playbook-extract          (extracción de esencia + triage 1 a 1)"
+echo "  /playbook-stack            (gestión de stacks tecnológicos)"
+echo "  /playbook-delete           (eliminación guiada con confirmación)"
+echo "  Tools del modelo: playbook_consult y playbook_manage"
 echo "=========================================="

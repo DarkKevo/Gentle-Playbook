@@ -1,8 +1,8 @@
 # 📘 Gentle-Playbook
 
-> **Architectural Essence & Opinionated Language Playbook Manager for Pi & el Gentleman**
+> **Architectural Essence & Opinionated Language Playbook Manager for Pi, el Gentleman & OpenCode**
 
-`gentle-playbook` es una extensión nativa para **Pi (TUI-First)** diseñada para capturar, almacenar, hacer cumplir y evolucionar las normas de arquitectura de software personalizadas por lenguaje de programación. Toda la interacción, extracción agéntica y gestión se realiza interactivamente dentro de Pi.
+`gentle-playbook` es una extensión nativa para **Pi (TUI-First)** — y desde v0.9 un plugin nativo para **OpenCode** — diseñada para capturar, almacenar, hacer cumplir y evolucionar las normas de arquitectura de software personalizadas por lenguaje de programación. Toda la interacción, extracción agéntica y gestión se realiza dentro de tu agente, con wizards interactivos en Pi y flujos agente-mediados en OpenCode. Ambos runtimes comparten el mismo almacenamiento, las mismas reglas y enforcement idéntico byte a byte.
 
 ---
 
@@ -95,6 +95,7 @@ El script se encarga de:
 - Descargar la última versión en `~/.local/share/gentle-playbook`.
 - Instalar dependencias npm y compilar TypeScript.
 - Registrar el paquete nativo en Pi (`pi install`).
+- **Si detecta OpenCode**: compilar el bundle del plugin (`dist/opencode.js`) e instalarlo en `~/.config/opencode/plugins/` junto con los comandos `/playbook*` en `~/.config/opencode/command/`.
 - Crear el directorio de almacenamiento `~/.config/gentle-playbook/languages/`.
 
 ---
@@ -288,6 +289,56 @@ Administrá y depurá tus normas directamente desde el TUI de Pi con asistentes 
 
 - **Borrado de Regla Individual:** Podés seleccionar una regla específica de la lista o pasar `--rule <id>`. La extensión te pedirá confirmación (`ui.confirm`) antes de removerla y actualizar la versión del playbook.
 - **Borrado de Playbook Completo:** Si elegís borrar el playbook entero, requiere una **doble confirmación explícita** para prevenir pérdidas accidentales.
+
+---
+
+## 🧩 Soporte OpenCode (v0.9)
+
+`gentle-playbook` corre también como **plugin nativo de OpenCode**: mismo almacenamiento (`~/.config/gentle-playbook/`), mismas reglas y **enforcement idéntico byte a byte** al de Pi, porque ambos runtimes comparten el módulo de gobernanza (`src/core/governance.ts`).
+
+### Arquitectura del adapter
+
+El entry del plugin sigue el contrato **v2 de `@opencode/plugin`** (`@opencode/plugin@2.0.4`): el bundle exporta por default el objeto `Plugin.define({ id: "gentle-playbook", setup(ctx) })` y registra todo por dominio (`ctx.session.hook`, `ctx.tool.hook`, `ctx.tool.transform`).
+
+| API Pi | Equivalente OpenCode 2.x | Función |
+|---------|--------------------------|----------|
+| `before_agent_start` (puntero en system prompt) | `ctx.session.hook("context")` (SystemPart por request) | Directiva liviana que orienta a consultar `playbook_consult` |
+| Hook `input` (pre-vuelo) | `ctx.session.hook("prompt")` (muta `prompt.text` in-place) | Evaluación determinística (<1ms, sin LLM) del prompt contra las capas activas |
+| Hook `tool_call` (barrera de escritura) | `ctx.tool.hook("execute.before")` (args en `call.input`) | Fail-closed para `write`/`edit`/`patch`; `throw` = bloqueo |
+| `registerTool(playbook_consult)` | `ctx.tool.transform` → `editor.add({ name: "playbook_consult", input: zod })` | Datos pasivos de referencia on-demand |
+| Wizards TUI (`/playbook add`...) | Comandos markdown + `playbook_manage` | Flujos **agente-mediados**: el agente pregunta, la tool ejecuta |
+| — (exclusivo de OpenCode) | `ctx.session.hook("compaction")` | Las normas activas sobreviven a la compactación |
+
+### Diferencias de runtime (por diseño)
+
+- **OpenCode no permite cancelar un mensaje desde un plugin**: los intentos de bypass quedan como directiva visible (`[DIRECTIVA DE GOBERNANZA PLAYBOOK]: Se detectó un intento de eludir el control...`) y el bloqueo real vive en la barrera de herramientas.
+- **No hay UI de plugin**: los wizards interactivos de Pi se convierten en flujos agente-mediados. El comando instruye al agente, el agente sintetiza la regla conversando con el usuario, y `playbook_manage` valida, previsualiza (colisiones incluidas), confirma y persiste. El contenido tipo inyección se rechaza ruidosamente ANTES de persistir (nunca se dropea en silencio).
+- **Preguntas ASK**: en Pi saltan como confirmaciones TUI; en OpenCode la directiva aplica el default documentado sin inanición del feature base.
+
+### Comandos en OpenCode
+
+| Comando | Flujo |
+|---------|-------|
+| `/playbook` | Jerarquía activa del workspace (solo lectura) |
+| `/playbook-add` | Wizard agente-mediado: capa → regla natural → tipo → síntesis → preview → confirmación → save |
+| `/playbook-extract` | Extracción de esencia de un repo de referencia + triage 1 a 1 (Global/Stack/Local/Modificar/Descartar) |
+| `/playbook-stack` | Listar, crear (`scope: "stack"`) y eliminar stacks |
+| `/playbook-delete` | Eliminación quirúrgica de reglas o playbooks completos con confirmación explícita |
+
+Las tools del modelo (`playbook_consult`, `playbook_manage`) también están disponibles sin comandos: cualquier agente puede consultar o gestionar normas en conversación directa.
+
+### Instalación en OpenCode
+
+El `install.sh` detecta OpenCode automáticamente (binario o `~/.config/opencode` existente), compila el bundle single-file y lo instala:
+
+```text
+~/.config/opencode/plugins/gentle-playbook.js   (bundle ESM: export default = { id, setup }; zod incluido, @opencode/plugin como peer del runtime)
+~/.config/opencode/command/playbook*.md          (5 comandos)
+```
+
+Requiere **OpenCode 2.0.x** (contrato v2 de plugins). El bundle carga como módulo ESM: `import` del archivo devuelve un objeto `default` con `id: "gentle-playbook"` y una función `setup(ctx)`.
+
+Si instalaste OpenCode después de gentle-playbook, re-ejecutá el install.
 
 ---
 
