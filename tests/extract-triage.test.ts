@@ -251,13 +251,15 @@ describe('Extract Triage 1-a-1 Wizard', () => {
       },
     };
 
+    const mockPi = { sendMessage: vi.fn() };
+
     const summary = await runExtractTriage({
       draft: conflictingDraft,
       detectedLang: 'go',
       projectPath: tempDir,
       storage,
       ctx: mockCtx,
-      pi: { sendMessage: vi.fn() },
+      pi: mockPi,
       completePrompt: async () => '',
     });
 
@@ -266,5 +268,88 @@ describe('Extract Triage 1-a-1 Wizard', () => {
     const reloaded = await storage.getPlaybook('go');
     const rule = reloaded?.invariants.find((i) => i.id === 'conflict-rule');
     expect(rule?.description).toBe('Usar gin siempre.');
+
+    // Verificar que se emitió el card de conflicto comparativo a la interfaz
+    const conflictMessage = mockPi.sendMessage.mock.calls.find((c: any) =>
+      c[0]?.customType === 'gentle-playbook-layer-conflict'
+    );
+    expect(conflictMessage).toBeDefined();
+    expect(conflictMessage[0].content).toContain('Versión Existente');
+    expect(conflictMessage[0].content).toContain('Versión Entrante');
+  });
+
+  it('should NOT trigger false conflict for distinct rules sharing surface in same layer', async () => {
+    // Regla existente b1 en core/style
+    await storage.savePlaybook({
+      language: 'go',
+      version: 1,
+      updatedAt: '2026-10-08',
+      topology: { pattern: 'Standard', directories: [] },
+      invariants: [
+        {
+          id: 'b1',
+          type: 'invariant',
+          title: 'Modular Hexagonal',
+          surface: 'core/style',
+          description: 'Usar app/ y ports/.',
+        },
+      ],
+      askRules: [],
+      snippets: [],
+    });
+
+    // Regla entrante b5 en core/style (distinto ID)
+    const distinctDraft: Playbook = {
+      language: 'go',
+      version: 1,
+      updatedAt: '2026-10-08',
+      topology: { pattern: 'Standard', directories: [] },
+      invariants: [
+        {
+          id: 'b5',
+          type: 'invariant',
+          title: 'Mocks Manuales',
+          surface: 'core/style',
+          description: 'Usar structs con closures.',
+        },
+      ],
+      askRules: [],
+      snippets: [],
+    };
+
+    // Solo debe preguntar a dónde guardarla (Global), NO debe preguntar por conflicto
+    const selectMock = vi
+      .fn()
+      .mockResolvedValueOnce('🌐 1. Global (Lenguaje: GO)');
+
+    const mockCtx = {
+      cwd: tempDir,
+      ui: {
+        confirm: async () => true,
+        select: selectMock,
+        notify: vi.fn(),
+      },
+    };
+
+    const mockPi = { sendMessage: vi.fn() };
+
+    const summary = await runExtractTriage({
+      draft: distinctDraft,
+      detectedLang: 'go',
+      projectPath: tempDir,
+      storage,
+      ctx: mockCtx,
+      pi: mockPi,
+      completePrompt: async () => '',
+    });
+
+    expect(summary.savedToGlobal).toBe(1);
+    // select solo fue llamado 1 vez (para elegir Global), nunca para conflicto
+    expect(selectMock).toHaveBeenCalledTimes(1);
+
+    const reloaded = await storage.getPlaybook('go');
+    expect(reloaded?.invariants.length).toBe(2);
+    expect(reloaded?.invariants.some((i) => i.id === 'b1')).toBe(true);
+    expect(reloaded?.invariants.some((i) => i.id === 'b5')).toBe(true);
   });
 });

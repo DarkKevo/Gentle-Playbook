@@ -357,8 +357,14 @@ async function handleAddRule(
       `- Surface: \`${synthesized.surface}\`\n` +
       `- Descripción: ${synthesized.description}`;
 
+    pi.sendMessage({
+      customType: 'gentle-playbook-layer-conflict',
+      content: `### ⚔️ Conflicto de Reglas Detectado\n\n${collisionMsg}`,
+      display: true,
+    });
+
     const choice = await ctx.ui.select(
-      `Conflicto en superficie \`${synthesized.surface}\`:`,
+      `Conflicto en superficie \`${synthesized.surface}\` con [${c.scopeLabel}]:`,
       [
         `📥 1. Guardar en ${targetDisplayName} de todos modos (prevalece en este ámbito)`,
         `🛡️ 2. Conservar la regla existente de ${c.scopeLabel} (descartar la nueva)`,

@@ -214,7 +214,8 @@ export async function runExtractTriage(
           `GLOBAL: ${detectedLang.toUpperCase()}`,
           globalPb,
           r,
-          ctx
+          ctx,
+          pi
         );
         if (proceed) {
           upsertRuleInPlaybook(globalPb, r);
@@ -303,7 +304,8 @@ export async function runExtractTriage(
           `STACK: ${chosenStackSlug}`,
           stackPb,
           r,
-          ctx
+          ctx,
+          pi
         );
         if (proceed) {
           upsertRuleInPlaybook(stackPb, r);
@@ -339,7 +341,8 @@ export async function runExtractTriage(
           'LOCAL (playbook.md)',
           localPb,
           r,
-          ctx
+          ctx,
+          pi
         );
         if (proceed) {
           upsertRuleInPlaybook(localPb, r);
@@ -456,32 +459,51 @@ async function resolveLayerConflictIfNeeded(
   targetLayerLabel: string,
   targetPb: Playbook,
   incomingRule: AnyRule,
-  ctx: any
+  ctx: any,
+  pi?: any
 ): Promise<boolean> {
-  const collisions = findCollidingRules(incomingRule, [
-    { scopeLabel: targetLayerLabel, playbook: targetPb },
-  ]);
+  const collisions = findCollidingRules(
+    incomingRule,
+    [{ scopeLabel: targetLayerLabel, playbook: targetPb }],
+    { sameLayer: true }
+  );
 
   if (collisions.length === 0) return true;
 
   const col = collisions[0];
   const msg =
-    `⚠️ Conflicto detectado en [${col.scopeLabel}]:\n\n` +
-    `[REGLA EXISTENTE en ${col.scopeLabel}]\n` +
-    `- Título: ${col.rule.title}\n` +
-    `- Surface: \`${col.rule.surface}\`\n` +
-    `- Descripción: ${col.rule.description}\n\n` +
-    `[REGLA ENTRANTE (Extract)]\n` +
-    `- Título: ${incomingRule.title}\n` +
-    `- Surface: \`${incomingRule.surface}\`\n` +
-    `- Descripción: ${incomingRule.description}`;
+    `⚠️ Conflicto detectado en [${col.scopeLabel}] (${col.reason}):\n\n` +
+    `**[REGLA EXISTENTE en ${col.scopeLabel}]**\n` +
+    `- **ID:** \`${col.rule.id}\`\n` +
+    `- **Título:** ${col.rule.title}\n` +
+    `- **Surface:** \`${col.rule.surface}\`\n` +
+    `- **Descripción:** ${col.rule.description}` +
+    (col.ruleType === 'never' && (col.rule as NeverRule).reason
+      ? `\n- **Motivo:** ${(col.rule as NeverRule).reason}`
+      : '') +
+    `\n\n` +
+    `**VS**\n\n` +
+    `**[REGLA ENTRANTE (Extract)]**\n` +
+    `- **ID:** \`${incomingRule.id}\`\n` +
+    `- **Título:** ${incomingRule.title}\n` +
+    `- **Surface:** \`${incomingRule.surface}\`\n` +
+    `- **Descripción:** ${incomingRule.description}` +
+    (incomingRule.type === 'never' && (incomingRule as NeverRule).reason
+      ? `\n- **Motivo:** ${(incomingRule as NeverRule).reason}`
+      : '');
+
+  pi?.sendMessage?.({
+    customType: 'gentle-playbook-layer-conflict',
+    content: `### ⚔️ Conflicto de Reglas Detectado\n\n${msg}`,
+    display: true,
+  });
 
   if (ctx.ui?.select) {
     const choice = await ctx.ui.select(
-      `Conflicto en ${col.scopeLabel} para superficie \`${incomingRule.surface}\`:`,
+      `Conflicto en ${col.scopeLabel} [${col.rule.id} vs ${incomingRule.id}]:`,
       [
-        `📥 1. Reemplazar por la nueva versión (adoptar extract)`,
-        `🛡️ 2. Conservar versión existente de ${col.scopeLabel} (descartar nueva)`,
+        `📥 1. Reemplazar existente [${col.rule.id}] por la nueva versión (adoptar extract)`,
+        `🛡️ 2. Conservar versión existente [${col.rule.id}] (descartar nueva)`,
       ]
     );
     if (choice?.includes('Conservar')) {

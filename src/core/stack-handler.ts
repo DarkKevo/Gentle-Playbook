@@ -18,16 +18,22 @@ export interface CollidingRuleInfo {
   reason: string;
 }
 
+export interface FindCollidingOptions {
+  sameLayer?: boolean;
+}
+
 /**
  * Busca reglas existentes en otros ámbitos que colisionen o toquen la misma superficie.
  */
 export function findCollidingRules(
   newRule: { id: string; surface: string; title: string; description: string },
-  candidateLayers: Array<{ scopeLabel: string; playbook: Playbook }>
+  candidateLayers: Array<{ scopeLabel: string; playbook: Playbook }>,
+  options?: FindCollidingOptions
 ): CollidingRuleInfo[] {
   const collisions: CollidingRuleInfo[] = [];
   const normSurface = (newRule.surface || '').trim().toLowerCase();
   const normId = (newRule.id || '').trim().toLowerCase();
+  const sameLayer = options?.sameLayer ?? false;
 
   for (const layer of candidateLayers) {
     const pb = layer.playbook;
@@ -40,8 +46,8 @@ export function findCollidingRules(
       const rSurface = (r.surface || '').trim().toLowerCase();
       const rId = (r.id || '').trim().toLowerCase();
 
-      // Conflicto 1: Mismo ID exacto
-      if (rId && rId === normId) {
+      // Conflicto 1: Mismo ID exacto (aplica tanto en la misma capa como entre capas)
+      if (rId && normId && rId === normId) {
         collisions.push({
           scopeLabel: layer.scopeLabel,
           ruleType: rType,
@@ -51,12 +57,18 @@ export function findCollidingRules(
         return;
       }
 
-      // Conflicto 2: Misma superficie exacta o subsuperficie
+      // Si estamos evaluando dentro de la MISMA capa (ej: guardar en Global o Local existente),
+      // múltiples reglas independientes pueden compartir superficie (ej: 'core/style', 'transport/http').
+      // No constituyen conflicto salvo que coincidan en ID exacto.
+      if (sameLayer) return;
+
+      // Conflicto 2: Misma superficie exacta o subsuperficie entre capas distintas (Stack A vs Stack B, etc.)
+      const isGeneric = (s: string) => s === 'src/' || s === 'general' || s === 'core/style' || s === 'style';
       if (
         normSurface &&
         rSurface &&
-        normSurface !== 'src/' &&
-        rSurface !== 'src/' &&
+        !isGeneric(normSurface) &&
+        !isGeneric(rSurface) &&
         (normSurface === rSurface ||
           normSurface.startsWith(rSurface) ||
           rSurface.startsWith(normSurface))
