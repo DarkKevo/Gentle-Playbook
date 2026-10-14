@@ -269,6 +269,12 @@ A diferencia del volcado masivo en bloque, `/playbook extract` pasa **regla por 
 - ✏️ **4. Modificar regla:** ingresás un prompt en lenguaje natural, la IA refina la regla y te la vuelve a mostrar en el menú para clasificarla.
 - 🗑️ **5. Descartar regla:** descarta la regla y avanza a la siguiente.
 
+#### ⚔️ Resolución de Conflictos Humano-Legible:
+Cuando una regla entrante coincide con un ID existente o entra en conflicto de soberanía:
+1. **Tarjeta comparativa completa:** Se proyecta en Markdown la regla existente vs la regla entrante con sus IDs, superficies y descripciones detalladas.
+2. **Opciones con texto explícito:** Las opciones del selector interactivo muestran la descripción literal de cada regla (`📥 Adoptar nueva: "..."` vs `🛡️ Conservar existente: "..."`), eliminando la incertidumbre de elegir por IDs abstractos.
+3. **Convivencia no conflictiva en la misma capa:** Reglas independientes dentro del mismo playbook pueden gobernar legítimamente superficies compartidas (ej: `core/style`, `transport/http`) sin generar falsos positivos.
+
 ---
 
 ### 8. Gestión y Eliminación Quirúrgica: `/playbook delete`
